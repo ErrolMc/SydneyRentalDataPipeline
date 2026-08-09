@@ -22,15 +22,16 @@ export function buildSearchUrl(p: SearchParams): string {
   if (p.propertyTypes?.length) {
     parts.push(`property-${p.propertyTypes.map((t) => t.toLowerCase()).join("-")}`);
   }
-  if (p.minBedrooms != null) {
-    parts.push(`with-${p.minBedrooms}-bedrooms`);
-  }
-  if (p.minBathrooms != null) {
-    parts.push(`${p.minBathrooms}-bathrooms`);
-  }
-  if (p.minCarSpaces != null) {
-    parts.push(`${p.minCarSpaces}-car-spaces`);
-  }
+  // Bed/bath/car chain under a SINGLE leading `with-`, e.g.
+  //   with-2-bedrooms-2-bathrooms-1-car-space
+  // The `with-` is mandatory: a bare `1-car-space` segment is silently ignored
+  // by REA (the page still renders, unfiltered), so always verify with a
+  // result-count change rather than trusting a 200.
+  const attrs: string[] = [];
+  if (p.minBedrooms != null) attrs.push(`${p.minBedrooms}-bedrooms`);
+  if (p.minBathrooms != null) attrs.push(`${p.minBathrooms}-bathrooms`);
+  if (p.minCarSpaces != null) attrs.push(`${p.minCarSpaces}-car-space`);
+  if (attrs.length) parts.push(`with-${attrs.join("-")}`);
   if (p.minPrice != null || p.maxPrice != null) {
     // REA requires both ends; "any" is the open end.
     const lo = p.minPrice ?? 0;
