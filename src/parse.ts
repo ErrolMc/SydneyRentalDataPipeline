@@ -90,6 +90,21 @@ const num = (v: unknown): number | undefined =>
     ? ((v as { value: number }).value)
     : undefined;
 
+/**
+ * `sizeUnit` is sometimes a plain string ("m²") and sometimes an object with a
+ * display field, so naive concatenation yields "108[object Object]".
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const formatSize = (size: any): string | undefined => {
+  const value = size?.displayValue;
+  if (value == null || value === "") return undefined;
+  const unit = size.sizeUnit;
+  const unitText =
+    typeof unit === "string" ? unit : (unit?.displayValue ?? unit?.display ?? unit?.value ?? "m²");
+  return `${value}${unitText}`;
+};
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 const templated = (v: unknown): string | undefined => {
   const url = (v as { templatedUrl?: string } | undefined)?.templatedUrl;
   return url ? url.replace("{size}", IMAGE_SIZE) : undefined;
@@ -115,10 +130,8 @@ export function normaliseListing(raw: any): Listing {
     bathrooms: num(feat?.bathrooms),
     carSpaces: num(feat?.parkingSpaces),
     studies: num(feat?.studies),
-    landSize: sizes?.land?.displayValue ? `${sizes.land.displayValue}${sizes.land.sizeUnit ?? ""}` : undefined,
-    buildingSize: sizes?.building?.displayValue
-      ? `${sizes.building.displayValue}${sizes.building.sizeUnit ?? ""}`
-      : undefined,
+    landSize: formatSize(sizes?.land),
+    buildingSize: formatSize(sizes?.building),
     agency: g?.listingCompany
       ? {
           name: g.listingCompany.name,
