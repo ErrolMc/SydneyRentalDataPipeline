@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Browser profile holds the Kasada token + cookies — never commit
+.profile/
+profile-*/
+
+# scratch
+*.local.json
+scratch/

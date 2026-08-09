@@ -1,0 +1,32 @@
+{
+  "name": "realestate-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for searching realestate.com.au listings",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "realestate-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "setup": "node dist/cli.js setup",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "patchright": "^1.52.5",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
