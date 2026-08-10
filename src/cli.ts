@@ -21,9 +21,16 @@ export async function runSetup(): Promise<void> {
     console.error("Now add the server to Claude Code:\n");
     console.error("  claude mcp add realestate -- npx -y realestate-mcp\n");
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     console.error("─".repeat(50));
     console.error("Setup failed.\n");
-    console.error(`  ${e instanceof Error ? e.message : String(e)}\n`);
+    if (/ProcessSingleton|already (in use|running)|has been closed|in use/i.test(msg)) {
+      console.error("  The browser profile is locked by another process.");
+      console.error("  Chrome allows only one process per profile directory.\n");
+      console.error("  Quit Claude Code (or disconnect the realestate MCP server),");
+      console.error("  then run setup again.\n");
+    }
+    console.error(`  ${msg}\n`);
     process.exitCode = 1;
   }
 }

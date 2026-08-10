@@ -6,6 +6,7 @@ import { z } from "zod";
 import { closeContext, fetchPage, NotWarmError } from "./browser.js";
 import { parseListingPage, parseSearchPage } from "./parse.js";
 import { buildListingUrl, buildSearchUrl, suggestLocations } from "./search.js";
+import { fetchImages, IMAGE_SIZES } from "./images.js";
 import type { Channel, SearchParams } from "./types.js";
 import { runSetup } from "./cli.js";
 
@@ -106,6 +107,73 @@ server.registerTool(
     try {
       const { html } = await fetchPage(url);
       return ok(parseListingPage(html));
+    } catch (e) {
+      return fail(explain(e));
+    }
+  },
+);
+
+server.registerTool(
+  "get_listing_photos",
+  {
+    title: "Get listing photos",
+    description:
+      "Fetch the actual photographs for a listing as images, so they can be looked at " +
+      "and judged directly — condition, style, natural light, renovation quality, " +
+      "how a room is laid out, whether furniture would fit. " +
+      "Use this when the question is about how a place LOOKS rather than its numbers. " +
+      "Costs roughly 400 tokens per image at the default size, so keep `limit` small " +
+      "and raise `size` only when fine detail matters. Set `includeFloorplan` to judge layout.",
+    inputSchema: {
+      listing: z.string().describe("Listing URL or numeric ID"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(12)
+        .default(6)
+        .describe("How many photos to return. Keep low — each one costs context."),
+      size: z
+        .enum(IMAGE_SIZES)
+        .default("640x480")
+        .describe("Larger sizes cost proportionally more tokens"),
+      includeFloorplan: z
+        .boolean()
+        .default(false)
+        .describe("Prepend the floorplan, when the listing has one"),
+    },
+  },
+  async ({ listing, limit, size, includeFloorplan }) => {
+    try {
+      const { html } = await fetchPage(buildListingUrl(listing));
+      const detail = parseListingPage(html);
+
+      const urls = [
+        ...(includeFloorplan ? (detail.floorplans ?? []) : []),
+        ...(detail.images ?? []),
+      ];
+      if (!urls.length) return fail(`No photos published for ${detail.address || listing}.`);
+
+      const images = await fetchImages(urls, size, limit);
+      if (!images.length) return fail("Found photo URLs but none could be downloaded.");
+
+      const kb = Math.round(images.reduce((a, b) => a + b.bytes, 0) / 1024);
+      const header =
+        `${detail.address}\n${detail.price} — ${detail.bedrooms}bd ${detail.bathrooms}ba ` +
+        `${detail.carSpaces ?? 0}car${detail.buildingSize ? ` — ${detail.buildingSize}` : ""}\n` +
+        `${images.length} of ${urls.length} images at ${size} (${kb}KB)` +
+        (includeFloorplan && detail.floorplans?.length ? " — first image is the floorplan" : "");
+
+      return {
+        content: [
+          { type: "text" as const, text: header },
+          ...images.map((i) => ({
+            type: "image" as const,
+            data: i.data,
+            mimeType: i.mimeType,
+          })),
+        ],
+      };
     } catch (e) {
       return fail(explain(e));
     }

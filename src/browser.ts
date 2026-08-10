@@ -43,18 +43,47 @@ const contextOptions = {
   viewport: { width: 1440, height: 900 },
 } as const;
 
+/**
+ * Chrome takes an exclusive lock on its user-data-dir, so a long-lived context
+ * would stop `setup` (a separate process) from ever warming the profile while
+ * the MCP server is running — and would keep serving the cookies it loaded at
+ * startup. We therefore drop the context after a short idle period.
+ */
+const IDLE_MS = Number(process.env.REALESTATE_MCP_IDLE ?? 30_000);
+
 let shared: BrowserContext | null = null;
-let closing = false;
+let inFlight = 0;
+let idleTimer: NodeJS.Timeout | null = null;
 
 async function launch(headless: boolean): Promise<BrowserContext> {
   mkdirSync(PROFILE_DIR, { recursive: true });
   return chromium.launchPersistentContext(PROFILE_DIR, { ...contextOptions, headless });
 }
 
+function scheduleIdleClose() {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (inFlight === 0) void closeContext();
+  }, IDLE_MS);
+  idleTimer.unref?.();
+}
+
 /** Lazily open (and reuse) the headless context used to serve tool calls. */
 export async function getContext(): Promise<BrowserContext> {
-  if (shared && !closing) return shared;
-  shared = await launch(true);
+  if (shared) return shared;
+  try {
+    shared = await launch(true);
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/ProcessSingleton|already (in use|running)|has been closed/i.test(msg)) {
+      throw new Error(
+        `Could not open the browser profile at ${PROFILE_DIR} — another process ` +
+          `is using it.\nThis usually means a 'setup' run is still open, or a ` +
+          `stray Chrome is holding it. Close it and try again.\n\nUnderlying: ${msg}`,
+      );
+    }
+    throw e;
+  }
   shared.on("close", () => {
     shared = null;
   });
@@ -62,8 +91,11 @@ export async function getContext(): Promise<BrowserContext> {
 }
 
 export async function closeContext(): Promise<void> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
   if (!shared) return;
-  closing = true;
   const ctx = shared;
   shared = null;
   try {
@@ -71,7 +103,6 @@ export async function closeContext(): Promise<void> {
   } catch {
     /* already gone */
   }
-  closing = false;
 }
 
 /**
@@ -95,7 +126,7 @@ export interface FetchedPage {
  * Navigate to `url` in the warm headless context and return the settled HTML.
  * Throws {@link NotWarmError} when the profile is cold.
  */
-export async function fetchPage(url: string, settleMs = 4_000): Promise<FetchedPage> {
+async function fetchOnce(url: string, settleMs: number): Promise<FetchedPage> {
   const ctx = await getContext();
   const page: Page = await ctx.newPage();
   let status: number | null = null;
@@ -118,6 +149,25 @@ export async function fetchPage(url: string, settleMs = 4_000): Promise<FetchedP
     return { html, title, url: page.url(), status };
   } finally {
     await page.close().catch(() => {});
+  }
+}
+
+export async function fetchPage(url: string, settleMs = 4_000): Promise<FetchedPage> {
+  inFlight++;
+  try {
+    try {
+      return await fetchOnce(url, settleMs);
+    } catch (e) {
+      if (!(e instanceof NotWarmError)) throw e;
+      // The profile may have been warmed by a `setup` run after this context was
+      // opened. A live Chrome won't pick up cookies written underneath it, so
+      // drop the context and retry once against the on-disk profile.
+      await closeContext();
+      return await fetchOnce(url, settleMs);
+    }
+  } finally {
+    inFlight--;
+    scheduleIdleClose();
   }
 }
 
