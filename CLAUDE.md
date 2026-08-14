@@ -101,10 +101,58 @@ never by checking the response was 200.
 Client-side filtering on returned fields is authoritative; treat URL filters as
 an optimisation that reduces pages fetched.
 
+## Travel times (`src/distance.ts`)
+
+`search_listings` takes `travelFrom` (address or `"lat,lng"`), `travelMode`
+(`walk`/`drive`), `maxTravelMinutes` and `sortByTravel`. Each listing gains
+`travel: { minutes, km, mode, precision }`.
+
+**REA publishes no coordinates.** Verified against a live page: `listing.address`
+has only display/suburb/state/postcode, and a deep scan for any lat/lng-shaped
+key across every GraphQL payload finds nothing. Positions must be geocoded from
+the address string — which is why everything below matters.
+
+Geocoding traps, all found the hard way:
+
+- **Abbreviated street types wreck ranking.** `"4 Bridge St, Sydney"` returns a
+  *street lamp* on King Street Cycleway as its top hit; `"4 Bridge Street"`
+  returns the right building. Always run `expandStreetTypes` first.
+- **Never match a POI `name` against a street name.** `"24-26 Point Street,
+  Pyrmont"` matched **"Pyrmont Point Hotel"** — a pub on John Street — because
+  the name contains "Point". Only a feature that *is* a street (`type:"street"`
+  or `osm_key:"highway"`) may be matched on `name`; otherwise the `street` field
+  is authoritative and a mismatch rejects the candidate outright.
+- **Check the postcode.** "4 Bridge Street" also exists in Epping and Rydalmere.
+- Right street + wrong house number is `precision:"street"`, never `"building"`.
+  Expect most listings to land at street level — that is ±a block, fine for a
+  walkability call, but do not quote it as exact.
+
+A wrong geocode produces a *plausible* time, not an obvious error, so validate
+by detour ratio (`routed_km / crow_flies_km`): under 1.0 is impossible, and CBD
+grid should sit near 1.2–1.4. Pyrmont reads ~1.9 because of the Pyrmont Bridge
+water crossing — which is exactly why straight-line distance is not good enough
+here.
+
+Batching and caching are the whole design: one geocode per unique *building*
+(unit prefixes stripped, so 20 listings in one tower cost one lookup), one
+matrix request per 45 destinations, and everything cached forever in
+`~/.realestate-mcp/distance-cache.json`. A repeat query makes zero network
+calls. **Delete that cache after changing geocoding logic** — it happily holds
+the old wrong coordinates.
+
+Routers: `valhalla` (default, FOSSGIS public, no key) or `ors`
+(`REALESTATE_MCP_ROUTER=ors` + `ORS_API_KEY`). Geocoders: `photon` (default) or
+`nominatim`, via `REALESTATE_MCP_GEOCODER`. Neither router models traffic-light
+delay, so CBD walk times read a few minutes optimistic — treat as ±3 min.
+
 ## Conventions
 
 - Errors surfaced to the model should say what to *do* (see `NotWarmError`), not
   just what broke.
 - `get_listing_photos` costs roughly `(w × h) / 750` tokens per image. Keep
   `limit` low and default to a small `size`.
+- **Always analyse photos in a subagent**, never inline in the main
+  conversation. Spawn one per listing (or small batch), have it call the tool
+  itself, and report back a short text verdict. Images are billed wherever they
+  land; isolating them keeps the main thread clear.
 - Throwaway analysis scripts live in `scratch/` (gitignored).

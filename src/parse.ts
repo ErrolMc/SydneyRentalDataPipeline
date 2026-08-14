@@ -110,6 +110,31 @@ const templated = (v: unknown): string | undefined => {
   return url ? url.replace("{size}", IMAGE_SIZE) : undefined;
 };
 
+/**
+ * Building coordinates. REA has moved these around between schema versions, so
+ * probe the known shapes rather than trusting one path. Without these the whole
+ * travel-time feature silently degrades to nothing, so it is worth being liberal.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const coords = (addr: any, listing: any): { lat: number; lng: number } | undefined => {
+  const candidates = [
+    addr?.location,
+    addr?.geolocation,
+    addr?.coordinates,
+    listing?.location,
+    listing?.geolocation,
+  ];
+  for (const c of candidates) {
+    const lat = Number(c?.latitude ?? c?.lat);
+    const lng = Number(c?.longitude ?? c?.lon ?? c?.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      return { lat, lng };
+    }
+  }
+  return undefined;
+};
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function normaliseListing(raw: any): Listing {
   const g = raw?.listing ?? raw;
@@ -166,6 +191,7 @@ export function normaliseListing(raw: any): Listing {
       : undefined,
     soldPrice: g?.price?.display && g?.__typename?.includes("Sold") ? g.price.display : undefined,
     soldDate: g?.dateSold?.value ?? g?.dateSold?.display,
+    coords: coords(addr, g),
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

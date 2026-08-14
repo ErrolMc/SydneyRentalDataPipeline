@@ -22,6 +22,15 @@ export interface SearchParams {
   petsAllowed?: boolean;
   /** Sold only — how far back to look. */
   soldWithinMonths?: number;
+  /**
+   * Origin for travel-time enrichment — a street address, place name, or a
+   * bare "lat,lng". When set, every listing gets a real routed `travel` time.
+   */
+  travelFrom?: string;
+  travelMode?: "walk" | "drive";
+  /** Drop listings whose routed time exceeds this. Unknowns are kept, not dropped. */
+  maxTravelMinutes?: number;
+  sortByTravel?: boolean;
 }
 
 export interface Agent {
@@ -63,6 +72,20 @@ export interface Listing {
   /** Sold channel only. */
   soldPrice?: string;
   soldDate?: string;
+  /** Building position as published by REA. Absent on the odd listing. */
+  coords?: { lat: number; lng: number };
+  /**
+   * Real routed travel time from the `travelFrom` origin. `null` means we could
+   * not route it — never a straight-line guess standing in for a real one.
+   * `precision:"area"` means the address only resolved to a suburb centroid, so
+   * the time is indicative rather than measured.
+   */
+  travel?: {
+    minutes: number;
+    km: number;
+    mode: "walk" | "drive";
+    precision: "building" | "street" | "area";
+  } | null;
   /**
    * True when REA returned this from a neighbouring suburb rather than the one
    * searched. REA blends these into every result page by default.
@@ -87,6 +110,8 @@ export interface SearchResult {
   totalPages?: number;
   listings: Listing[];
   sourceUrl: string;
+  /** Present only when `travelFrom` was supplied. Describes how times were derived. */
+  travelReport?: unknown;
 }
 
 export interface LocationSuggestion {

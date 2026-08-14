@@ -7,6 +7,7 @@ import { closeContext, fetchPage, NotWarmError } from "./browser.js";
 import { parseListingPage, parseSearchPage } from "./parse.js";
 import { buildListingUrl, buildSearchUrl, suggestLocations } from "./search.js";
 import { fetchImages, IMAGE_SIZES } from "./images.js";
+import { enrichWithTravel, type TravelMode } from "./distance.js";
 import type { Channel, SearchParams } from "./types.js";
 import { runSetup } from "./cli.js";
 
@@ -68,6 +69,27 @@ server.registerTool(
         .array(z.enum(["house", "apartment", "townhouse", "villa", "land", "acreage", "unitblock"]))
         .optional(),
       excludeUnderContract: z.boolean().optional(),
+      travelFrom: z
+        .string()
+        .optional()
+        .describe(
+          'Origin for real routed travel times, e.g. "275 Kent St, Sydney NSW 2000" or a ' +
+            'bare "-33.8665,151.2045". Every listing gains a `travel` field with actual ' +
+            "routed minutes and km — not straight-line distance. Requests are batched " +
+            "(one per 45 listings) and cached on disk, so repeat searches are free.",
+        ),
+      travelMode: z.enum(["walk", "drive"]).default("walk"),
+      maxTravelMinutes: z
+        .number()
+        .optional()
+        .describe(
+          "Drop listings further than this from `travelFrom`. Listings that could not " +
+            "be routed are kept and reported, never silently discarded.",
+        ),
+      sortByTravel: z
+        .boolean()
+        .default(false)
+        .describe("Sort nearest-first. Unroutable listings sort last."),
     },
   },
   async (args) => {
@@ -81,6 +103,42 @@ server.registerTool(
         page: params.page ?? 1,
         sourceUrl: url,
       });
+
+      if (params.travelFrom) {
+        const mode: TravelMode = params.travelMode ?? "walk";
+        try {
+          const report = await enrichWithTravel(result.listings, params.travelFrom, mode);
+
+          if (params.maxTravelMinutes != null) {
+            const limit = params.maxTravelMinutes;
+            const before = result.listings.length;
+            // Only listings with a KNOWN time over the limit are dropped —
+            // an unknown is not evidence of being far away.
+            result.listings = result.listings.filter(
+              (l) => l.travel == null || l.travel.minutes <= limit,
+            );
+            report.notes = [
+              ...(report.notes ?? []),
+              `filtered to <=${limit} min ${mode}: ${before} -> ${result.listings.length}`,
+            ];
+          }
+
+          if (params.sortByTravel) {
+            result.listings.sort(
+              (a, b) => (a.travel?.minutes ?? Infinity) - (b.travel?.minutes ?? Infinity),
+            );
+          }
+
+          result.travelReport = report;
+        } catch (e) {
+          // A routing outage must not cost the user their search results.
+          result.travelReport = {
+            error: `travel times unavailable: ${(e as Error).message}`,
+            listingsReturnedWithoutTravel: result.listings.length,
+          };
+        }
+      }
+
       return ok(result);
     } catch (e) {
       return fail(explain(e));
