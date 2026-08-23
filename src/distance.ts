@@ -7,11 +7,13 @@
  * crow-flies gap is a 1.5km walk over Pyrmont Bridge. Only a real pedestrian
  * router gets that right.
  *
- * IMPORTANT — REA publishes no coordinates. Verified empirically against a live
- * search page: `listing.address` carries only display/suburb/state/postcode, and
- * a deep scan for any lat/lng-shaped key across every GraphQL payload in the
- * hydration blob returns nothing. So positions have to be geocoded from the
- * address string, which drives the whole design here:
+ * IMPORTANT — search results carry no coordinates. Verified empirically against
+ * a live search page: `listing.address` holds only display/suburb/state/postcode,
+ * and a deep scan for any lat/lng-shaped key across every GraphQL payload in the
+ * hydration blob returns nothing — a 1 MB cached result page has zero occurrences
+ * of "geocode" or "latitude". Since this module enriches *search* results, that
+ * means positions have to be geocoded from the address string, which drives the
+ * whole design here:
  *
  *  - **Deduped by building.** Unit numbers are stripped before geocoding, so the
  *    twenty listings inside 185-211 Broadway cost exactly one lookup.
@@ -24,6 +26,11 @@
  *    module exists to remove, so every result carries how it was resolved.
  *  - **Never silently guessed.** Failures produce `travel: null` and a count in
  *    the report — never a straight line dressed up as a routed number.
+ *
+ * Detail pages are the exception: `address.display.geocode` carries an exact
+ * building position, so `get_listing` returns real coordinates and needs none of
+ * this. That costs one page fetch per listing, so it is an upgrade for a
+ * shortlist, not a way to position a whole search.
  *
  * Routers (REALESTATE_MCP_ROUTER):
  *   valhalla (default) — FOSSGIS public instance, no API key

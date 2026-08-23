@@ -107,10 +107,19 @@ an optimisation that reduces pages fetched.
 (`walk`/`drive`), `maxTravelMinutes` and `sortByTravel`. Each listing gains
 `travel: { minutes, km, mode, precision }`.
 
-**REA publishes no coordinates.** Verified against a live page: `listing.address`
-has only display/suburb/state/postcode, and a deep scan for any lat/lng-shaped
-key across every GraphQL payload finds nothing. Positions must be geocoded from
-the address string — which is why everything below matters.
+**Search results carry no coordinates.** Verified against a live page:
+`listing.address` has only display/suburb/state/postcode, and a deep scan for any
+lat/lng-shaped key across every GraphQL payload finds nothing — a 1 MB cached
+result page has zero occurrences of `"geocode"` or `"latitude"`. So positions for
+a *search* must be geocoded from the address string, which is why everything
+below matters.
+
+**Detail pages are the exception.** `address.display.geocode` carries
+`{ latitude, longitude }` for the exact building, so `get_listing` returns real
+coordinates with no geocoding at all. It costs one page fetch per listing, which
+makes it an upgrade for a shortlist rather than a way to position a whole search.
+`coords()` in `parse.ts` probes that path first — it was missing it until
+2026-08-24, so `get_listing` silently returned no coordinates despite having them.
 
 Geocoding traps, all found the hard way:
 

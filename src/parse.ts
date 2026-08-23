@@ -114,10 +114,19 @@ const templated = (v: unknown): string | undefined => {
  * Building coordinates. REA has moved these around between schema versions, so
  * probe the known shapes rather than trusting one path. Without these the whole
  * travel-time feature silently degrades to nothing, so it is worth being liberal.
+ *
+ * Where they actually live, verified against cached payloads:
+ *   detail page   `address.display.geocode` = { latitude, longitude }
+ *   search page   nowhere — a 1 MB cached result page contains zero occurrences
+ *                 of "geocode" or "latitude". Search really does ship without
+ *                 them, which is why distance.ts geocodes from the address.
+ *
+ * So a detail fetch yields an exact building position and a search does not.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const coords = (addr: any, listing: any): { lat: number; lng: number } | undefined => {
   const candidates = [
+    addr?.display?.geocode,
     addr?.location,
     addr?.geolocation,
     addr?.coordinates,
