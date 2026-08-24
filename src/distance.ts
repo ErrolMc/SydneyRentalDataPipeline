@@ -924,3 +924,199 @@ export async function enrichWithTravel<T extends Locatable>(
   if (notes.length) report.notes = notes;
   return report;
 }
+
+/* ----------------------------------------------------------------- places -- */
+
+/** One place to measure from, with the caller's own identifier echoed back. */
+export interface PlaceOrigin {
+  id: string;
+  coord: Coord;
+}
+
+export interface PlaceLeg {
+  id: string;
+  minutes: number;
+  km: number;
+}
+
+export interface RoutePlacesReport {
+  destination: { query: string; lat: number; lng: number; precision: Precision };
+  mode: TravelMode;
+  router: string;
+  arriveBy: string | null;
+  places: number;
+  legs: PlaceLeg[];
+  /** Ids with no answer. Never a straight line standing in for a measurement. */
+  unroutable: string[];
+  matrixCalls: number;
+  cachedLegs: number;
+}
+
+/**
+ * N origins → one destination.
+ *
+ * The opposite direction from `matrix`, and deliberately so. A commute is
+ * measured *into* the office, and with a transit `arrivalTime` the direction is
+ * a real difference rather than a formality — Sydney's peak timetable is not
+ * symmetric, so "leave the office and reach Epping by 9am" is a different number
+ * from "reach the office from Epping by 9am".
+ *
+ * Walk and drive are symmetric enough to ask the configured router the other way
+ * round, which is why only the Google path is written out here.
+ */
+async function manyToOne(
+  origins: Coord[],
+  destination: Coord,
+  mode: TravelMode,
+  arriveBy?: string,
+): Promise<MatrixLeg[]> {
+  if (mode !== "transit" && ROUTER !== "google") {
+    return matrix(destination, origins, mode);
+  }
+  assertRoutable(mode, arriveBy);
+
+  const body: Record<string, unknown> = {
+    origins: origins.map((o) => ({
+      waypoint: { location: { latLng: { latitude: o.lat, longitude: o.lng } } },
+    })),
+    destinations: [
+      {
+        waypoint: {
+          location: { latLng: { latitude: destination.lat, longitude: destination.lng } },
+        },
+      },
+    ],
+    travelMode: GOOGLE_TRAVEL_MODE[mode],
+  };
+  if (mode === "transit") body.arrivalTime = arriveBy;
+
+  const res = await fetch(GOOGLE_ROUTES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": GOOGLE_KEY as string,
+      "X-Goog-FieldMask": "originIndex,destinationIndex,duration,distanceMeters,status,condition",
+      "User-Agent": UA,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`Google Routes HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+
+  const elements = (await res.json()) as Array<{
+    originIndex?: number;
+    duration?: string;
+    distanceMeters?: number;
+    condition?: string;
+    status?: { code?: number };
+  }>;
+
+  const legs: MatrixLeg[] = origins.map(() => null);
+  for (const element of elements) {
+    // Indexed by ORIGIN here, not destination — the matrix is the other way up.
+    const i = element.originIndex;
+    if (i == null || i < 0 || i >= origins.length) continue;
+    if (element.status?.code) continue;
+    if (element.condition && element.condition !== "ROUTE_EXISTS") continue;
+    const seconds = Number.parseFloat(element.duration ?? "");
+    if (!Number.isFinite(seconds)) continue;
+    legs[i] = { minutes: seconds / 60, km: (element.distanceMeters ?? 0) / 1000 };
+  }
+  return legs;
+}
+
+/**
+ * Routed time from each of `origins` to one destination.
+ *
+ * Built for choosing *which suburbs are worth searching*, not for describing a
+ * property. The caller supplies the coordinates, so nothing here is geocoded and
+ * no Google position is cached — feed it OSM centroids and the 30-day licence
+ * limit never applies. A suburb centroid is `precision: "area"` by nature; that
+ * is fine for picking a search envelope and must not be shown as a listing's
+ * commute.
+ */
+export async function routePlaces(
+  origins: PlaceOrigin[],
+  destinationQuery: string,
+  mode: TravelMode,
+  arriveBy?: string,
+): Promise<RoutePlacesReport> {
+  assertRoutable(mode, arriveBy);
+
+  const resolved = await resolveOrigin(destinationQuery);
+  const destination: Coord = { lat: resolved.lat, lng: resolved.lng };
+  const c = loadCache();
+
+  const legs: PlaceLeg[] = [];
+  const unroutable: string[] = [];
+  const misses: PlaceOrigin[] = [];
+  let cachedLegs = 0;
+
+  for (const place of origins) {
+    const hit = c.routes[routeKey(mode, place.coord, destination, arriveBy)];
+    if (!hit) {
+      misses.push(place);
+      continue;
+    }
+    cachedLegs++;
+    legs.push({
+      id: place.id,
+      minutes: Math.round(hit.minutes * 10) / 10,
+      km: Math.round(hit.km * 100) / 100,
+    });
+  }
+
+  let matrixCalls = 0;
+  for (const group of chunk(misses, targetsPerCall(mode))) {
+    let answered: MatrixLeg[];
+    try {
+      answered = await manyToOne(
+        group.map((g) => g.coord),
+        destination,
+        mode,
+        arriveBy,
+      );
+      matrixCalls++;
+    } catch {
+      // An outage is not evidence of distance: leave the batch unanswered.
+      for (const place of group) unroutable.push(place.id);
+      continue;
+    }
+
+    group.forEach((place, index) => {
+      const leg = answered[index];
+      if (!leg) {
+        unroutable.push(place.id);
+        return;
+      }
+      c.routes[routeKey(mode, place.coord, destination, arriveBy)] = leg;
+      cacheDirty = true;
+      legs.push({
+        id: place.id,
+        minutes: Math.round(leg.minutes * 10) / 10,
+        km: Math.round(leg.km * 100) / 100,
+      });
+    });
+    await sleep(CHUNK_DELAY_MS);
+  }
+  flushCache();
+
+  return {
+    destination: {
+      query: destinationQuery,
+      lat: resolved.lat,
+      lng: resolved.lng,
+      precision: resolved.precision,
+    },
+    mode,
+    router: routerFor(mode),
+    arriveBy: arriveBy ?? null,
+    places: origins.length,
+    legs,
+    unroutable,
+    matrixCalls,
+    cachedLegs,
+  };
+}

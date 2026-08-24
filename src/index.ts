@@ -7,7 +7,7 @@ import { closeContext, fetchPage, NotWarmError } from "./browser.js";
 import { parseListingPage, parseSearchPage } from "./parse.js";
 import { buildListingUrl, buildSearchUrl, suggestLocations } from "./search.js";
 import { fetchImages, IMAGE_SIZES } from "./images.js";
-import { enrichWithTravel, type TravelMode } from "./distance.js";
+import { enrichWithTravel, routePlaces, type TravelMode } from "./distance.js";
 import type { Channel, SearchParams } from "./types.js";
 import { runSetup } from "./cli.js";
 
@@ -274,6 +274,60 @@ server.registerTool(
   async ({ query, max }) => {
     try {
       return ok(await suggestLocations(query, max));
+    } catch (e) {
+      return fail(explain(e));
+    }
+  },
+);
+
+server.registerTool(
+  "route_places",
+  {
+    title: "Routed time from many places to one destination",
+    description:
+      "Routed travel time from each of many coordinates to a single destination. " +
+      "Built for deciding WHICH suburbs are worth searching, not for describing a " +
+      "property: you supply the coordinates, so nothing is geocoded here. Measures " +
+      "INTO the destination (the commute direction), which matters for transit — " +
+      "arriving somewhere by 9am is not the same trip as leaving there at 9am. " +
+      "Results are cached on disk and deduped, so re-asking is free. A suburb " +
+      "centroid is an area-level position by nature: fine for picking a search " +
+      "envelope, never quote it as a listing's commute.",
+    inputSchema: {
+      places: z
+        .array(
+          z.object({
+            id: z.string().describe("Your identifier, echoed back on the leg"),
+            lat: z.number().min(-90).max(90),
+            lng: z.number().min(-180).max(180),
+          }),
+        )
+        .min(1)
+        .max(1000)
+        .describe("Origins to measure from"),
+      destination: z
+        .string()
+        .describe('Address or bare "lat,lng", e.g. "275 Kent St, Sydney NSW 2000"'),
+      travelMode: z.enum(["walk", "drive", "transit"]).default("walk"),
+      travelArriveBy: z
+        .string()
+        .optional()
+        .describe(
+          'RFC 3339 moment to arrive by, e.g. "2026-08-25T09:00:00+10:00". Required for ' +
+            "travelMode:transit and ignored otherwise.",
+        ),
+    },
+  },
+  async ({ places, destination, travelMode, travelArriveBy }) => {
+    try {
+      return ok(
+        await routePlaces(
+          places.map((p) => ({ id: p.id, coord: { lat: p.lat, lng: p.lng } })),
+          destination,
+          travelMode as TravelMode,
+          travelArriveBy,
+        ),
+      );
     } catch (e) {
       return fail(explain(e));
     }
