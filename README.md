@@ -38,7 +38,7 @@ claude mcp add realestate -- node "E:/Personal Projects/RealEstateMCP/dist/index
 
 | Tool | What it does |
 |---|---|
-| `search_listings` | Search buy / rent / sold by location, with price, bed, bath, car, land-size and property-type filters. 25 results per page. |
+| `search_listings` | Search buy / rent / sold by location, with price, bed, bath, car, land-size and property-type filters. 25 results per page. Optionally narrows by **real routed travel time** from an origin — walk, drive, or public transport — and attaches the measured minutes to every listing. |
 | `get_listing` | Full detail for one listing — description, all photos, floorplans, agents, agency ratings, suburb market insights. Takes a URL or bare listing ID. |
 | `get_listing_photos` | Returns the actual photographs **as images**, so the model can judge condition, finish quality, natural light and layout rather than just numbers. Optionally includes the floorplan. |
 | `resolve_location` | Turn `"bondi"` into canonical suburbs with state and postcode. No browser needed, ~50ms. Use it to disambiguate before searching. |
@@ -95,6 +95,10 @@ Two things that will bite you if you modify the parser:
 | `REALESTATE_MCP_PROFILE` | `~/.realestate-mcp/profile` | Where the warm browser profile lives |
 | `REALESTATE_MCP_CHANNEL` | `chrome` | Browser channel; `msedge` also works |
 | `REALESTATE_MCP_TIMEOUT` | `60000` | Navigation timeout in ms |
+| `REALESTATE_MCP_ROUTER` | `valhalla` | `valhalla` (no key), `ors` (needs `ORS_API_KEY`), or `google` (needs `GOOGLE_MAPS_API_KEY`) |
+| `REALESTATE_MCP_GEOCODER` | `photon` | `photon`, `nominatim`, or `google`. Google is markedly better on Australian unit addresses, which is what decides whether a travel time is measured or a suburb centroid |
+| `GOOGLE_MAPS_API_KEY` | — | Server key with the **Routes API** and **Geocoding API** enabled. Required for `travelMode: "transit"` in any configuration. Never use a browser key here — a referrer-restricted key cannot sign server-side calls, and a key that works server-side must never be shipped to a browser |
+| `ORS_API_KEY` | — | Only read when `REALESTATE_MCP_ROUTER=ors` |
 | `REALESTATE_MCP_IDLE` | `30000` | Idle ms before the browser closes and releases the profile lock |
 
 ## Development

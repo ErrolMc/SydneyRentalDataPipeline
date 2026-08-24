@@ -75,10 +75,25 @@ server.registerTool(
         .describe(
           'Origin for real routed travel times, e.g. "275 Kent St, Sydney NSW 2000" or a ' +
             'bare "-33.8665,151.2045". Every listing gains a `travel` field with actual ' +
-            "routed minutes and km — not straight-line distance. Requests are batched " +
-            "(one per 45 listings) and cached on disk, so repeat searches are free.",
+            "routed minutes and km — not straight-line distance, and `coords`, which " +
+            "search results otherwise never carry. Requests are batched and cached on " +
+            "disk, so repeat searches are free.",
         ),
-      travelMode: z.enum(["walk", "drive"]).default("walk"),
+      travelMode: z
+        .enum(["walk", "drive", "transit"])
+        .default("walk")
+        .describe(
+          "transit is real public-transport time from the timetable, not road distance. " +
+            "It needs GOOGLE_MAPS_API_KEY and a `travelArriveBy`.",
+        ),
+      travelArriveBy: z
+        .string()
+        .optional()
+        .describe(
+          'RFC 3339 moment to arrive by, e.g. "2026-08-25T09:00:00+10:00". Required for ' +
+            "travelMode:transit and ignored otherwise — the same trip takes a different " +
+            "time on a Tuesday morning and a Sunday night, so there is no sensible default.",
+        ),
       maxTravelMinutes: z
         .number()
         .optional()
@@ -107,7 +122,12 @@ server.registerTool(
       if (params.travelFrom) {
         const mode: TravelMode = params.travelMode ?? "walk";
         try {
-          const report = await enrichWithTravel(result.listings, params.travelFrom, mode);
+          const report = await enrichWithTravel(
+            result.listings,
+            params.travelFrom,
+            mode,
+            params.travelArriveBy,
+          );
 
           if (params.maxTravelMinutes != null) {
             const limit = params.maxTravelMinutes;

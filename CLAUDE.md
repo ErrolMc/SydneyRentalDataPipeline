@@ -104,8 +104,8 @@ an optimisation that reduces pages fetched.
 ## Travel times (`src/distance.ts`)
 
 `search_listings` takes `travelFrom` (address or `"lat,lng"`), `travelMode`
-(`walk`/`drive`), `maxTravelMinutes` and `sortByTravel`. Each listing gains
-`travel: { minutes, km, mode, precision }`.
+(`walk`/`drive`/`transit`), `travelArriveBy`, `maxTravelMinutes` and
+`sortByTravel`. Each listing gains `travel: { minutes, km, mode, precision }`.
 
 **Search results carry no coordinates.** Verified against a live page:
 `listing.address` has only display/suburb/state/postcode, and a deep scan for any
@@ -149,10 +149,54 @@ matrix request per 45 destinations, and everything cached forever in
 calls. **Delete that cache after changing geocoding logic** — it happily holds
 the old wrong coordinates.
 
-Routers: `valhalla` (default, FOSSGIS public, no key) or `ors`
-(`REALESTATE_MCP_ROUTER=ors` + `ORS_API_KEY`). Geocoders: `photon` (default) or
-`nominatim`, via `REALESTATE_MCP_GEOCODER`. Neither router models traffic-light
-delay, so CBD walk times read a few minutes optimistic — treat as ±3 min.
+Routers: `valhalla` (default, FOSSGIS public, no key), `ors`
+(`REALESTATE_MCP_ROUTER=ors` + `ORS_API_KEY`), or `google` (Routes API +
+`GOOGLE_MAPS_API_KEY`). Geocoders: `photon` (default), `nominatim`, or `google`,
+via `REALESTATE_MCP_GEOCODER`. Valhalla and ORS model no traffic-light delay, so
+CBD walk times read a few minutes optimistic — treat as ±3 min.
+
+### Transit
+
+**`travelMode: "transit"` is Google-only and always routes through Google**,
+whatever `REALESTATE_MCP_ROUTER` says — no free router does public transport, and
+approximating a train time from road distance would be the exact fake precision
+this module exists to remove. Asking Valhalla for it throws rather than quietly
+returning a walking time.
+
+**It requires `travelArriveBy`**, an RFC 3339 timestamp. A transit time is a
+timetable lookup, so the same pair of points is a different number on a Tuesday
+at 9am and a Sunday at 3am. There is no defensible default, so there is no
+default. The route cache keys on it for the same reason.
+
+Google batches transit at **100 elements per request** — 1,800 listings is 18
+calls, not 1,800, which is what makes transit affordable as a search filter at
+all. TfNSW's own Trip Planner is one trip per request and cannot.
+
+**Configuration errors fail the whole call; routing outages do not.** The
+per-chunk handler in `enrichWithTravel` deliberately absorbs a failed matrix
+request so an outage cannot cost the caller their results. A missing key is not
+an outage: absorbed, it would hand back every listing with `travel: null`, which
+`maxTravelMinutes` *keeps* rather than drops, so a transit search would silently
+return the entire unfiltered set as though everything matched. `assertRoutable`
+runs up front and throws for exactly this reason — do not move those checks back
+inside the try.
+
+### Google's caching limit is a licence term, not a tuning knob
+
+Google's terms allow latitude and longitude to be cached for **at most 30
+consecutive days**; only `place_id` may be kept indefinitely. OSM data has no
+such limit. So cache entries carry `src` and `at`, and `geoExpired` re-geocodes
+Google-sourced positions after 30 days while leaving Photon and Nominatim ones
+forever. Entries written before provenance existed have no `src` and are treated
+as OSM, which is what they were.
+
+Google is also never used as a *fallback* for an OSM primary — only as an
+explicit primary. Falling back silently would spend money nobody asked to spend
+and put a hidden expiry on entries the caller believes are permanent.
+
+Costs, if it matters: Compute Route Matrix Essentials is 10k elements/month free
+then $5/1k; Geocoding the same. `TRAFFIC_AWARE` would move routing to the Pro
+SKU at double that, which is why no clock is ever sent for `drive`.
 
 ## Conventions
 

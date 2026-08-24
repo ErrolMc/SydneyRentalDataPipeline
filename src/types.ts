@@ -27,7 +27,12 @@ export interface SearchParams {
    * bare "lat,lng". When set, every listing gets a real routed `travel` time.
    */
   travelFrom?: string;
-  travelMode?: "walk" | "drive";
+  travelMode?: "walk" | "drive" | "transit";
+  /**
+   * RFC 3339 moment to arrive by, e.g. "2026-08-25T09:00:00+10:00". Required
+   * when `travelMode` is "transit" — a train time without a clock is not a fact.
+   */
+  travelArriveBy?: string;
   /** Drop listings whose routed time exceeds this. Unknowns are kept, not dropped. */
   maxTravelMinutes?: number;
   sortByTravel?: boolean;
@@ -83,7 +88,7 @@ export interface Listing {
   travel?: {
     minutes: number;
     km: number;
-    mode: "walk" | "drive";
+    mode: "walk" | "drive" | "transit";
     precision: "building" | "street" | "area";
   } | null;
   /**

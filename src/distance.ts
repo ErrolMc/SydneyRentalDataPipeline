@@ -35,8 +35,23 @@
  * Routers (REALESTATE_MCP_ROUTER):
  *   valhalla (default) — FOSSGIS public instance, no API key
  *   ors                — OpenRouteService, needs ORS_API_KEY, 2000 calls/day
- * Neither models traffic-light delay, so CBD walk times read a few minutes
- * optimistic. Treat them as good to about ±3 min, not to the minute.
+ *   google             — Routes API, needs GOOGLE_MAPS_API_KEY. The only one
+ *                        that can do `transit`.
+ * Valhalla and ORS model no traffic-light delay, so CBD walk times read a few
+ * minutes optimistic. Treat them as good to about ±3 min, not to the minute.
+ *
+ * Geocoders (REALESTATE_MCP_GEOCODER): photon (default), nominatim, google.
+ *
+ * On choosing Google. It buys two things the free stack cannot: transit times
+ * at all, and noticeably better precision on Australian unit addresses —
+ * precision being what decides whether a number is measured or a suburb
+ * centroid dressed up as one. It costs two things. Money past the free tier
+ * (Compute Route Matrix Essentials: 10k elements/month free, then $5/1k;
+ * Geocoding the same), and a caching limit: **Google's terms allow latitude and
+ * longitude to be cached for at most 30 consecutive days**, where OSM data may
+ * be kept forever. So Google-sourced geo entries carry a timestamp and expire;
+ * OSM ones do not. That is a legal constraint, not a tuning knob — do not
+ * "optimise" it away.
  */
 
 import { homedir } from "node:os";
@@ -48,7 +63,12 @@ export interface Coord {
   lng: number;
 }
 
-export type TravelMode = "walk" | "drive";
+/**
+ * `transit` is Google-only — no free router does public transport, and the
+ * free ones would have to fake it from road distance, which is exactly the kind
+ * of invented precision this module exists to prevent.
+ */
+export type TravelMode = "walk" | "drive" | "transit";
 
 /**
  * How well the address resolved. `area` means the geocoder gave back a suburb or
@@ -93,11 +113,34 @@ const CACHE_PATH =
 const ROUTER = (process.env.REALESTATE_MCP_ROUTER ?? "valhalla").toLowerCase();
 const GEOCODER = (process.env.REALESTATE_MCP_GEOCODER ?? "photon").toLowerCase();
 const ORS_KEY = process.env.ORS_API_KEY;
+const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix";
+const GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
+
+/**
+ * Google's terms permit caching latitude/longitude for at most 30 consecutive
+ * days. OSM-derived positions have no such limit, so only Google entries carry
+ * an expiry — see the header note.
+ */
+const GOOGLE_GEO_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const VALHALLA_URL =
   process.env.REALESTATE_MCP_VALHALLA_URL ?? "https://valhalla1.openstreetmap.de/sources_to_targets";
 
+/**
+ * Valhalla and ORS are happy with 45 targets a call. Google counts *elements*
+ * (origins × destinations) and caps transit at 100 — the same figure is used for
+ * its road modes, well inside their 625, because a smaller body fails faster and
+ * costs less to retry.
+ */
 const MAX_TARGETS = 45;
+const GOOGLE_MAX_TARGETS = 100;
+
+function targetsPerCall(mode: TravelMode): number {
+  if (ROUTER === "google" || mode === "transit") return GOOGLE_MAX_TARGETS;
+  return MAX_TARGETS;
+}
 const CHUNK_DELAY_MS = 300;
 const HTTP_TIMEOUT_MS = 20_000;
 /** Photon tolerates a brisk pace; Nominatim's published policy is 1 req/sec. */
@@ -112,6 +155,10 @@ interface CachedGeo {
   lat: number;
   lng: number;
   precision: Precision;
+  /** Absent on entries written before provenance was tracked — those are OSM. */
+  src?: "osm" | "google";
+  /** Epoch ms. Only meaningful for `src: "google"`, which expires (see header). */
+  at?: number;
 }
 
 interface CacheShape {
@@ -145,8 +192,21 @@ function flushCache(): void {
 }
 
 const r5 = (n: number): number => Math.round(n * 1e5) / 1e5;
-const routeKey = (mode: TravelMode, o: Coord, d: Coord): string =>
-  `${mode}|${r5(o.lat)},${r5(o.lng)}|${r5(d.lat)},${r5(d.lng)}`;
+
+/**
+ * `when` is part of the key for a reason: a transit time is a function of the
+ * timetable at that moment. Caching "34 minutes" for a Tuesday 9am arrival and
+ * replaying it for a Sunday midnight one would be worse than not caching at all.
+ * Road modes ignore it — free-flow routing has no clock.
+ */
+const routeKey = (mode: TravelMode, o: Coord, d: Coord, when?: string): string =>
+  `${mode}|${when ?? ""}|${r5(o.lat)},${r5(o.lng)}|${r5(d.lat)},${r5(d.lng)}`;
+
+/** True once a Google-sourced position has passed the 30 days its licence allows. */
+function geoExpired(hit: CachedGeo): boolean {
+  if (hit.src !== "google") return false;
+  return hit.at === undefined || Date.now() - hit.at > GOOGLE_GEO_TTL_MS;
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -328,32 +388,133 @@ async function nominatimGeocode(query: string): Promise<GeoResult | null> {
   };
 }
 
+/**
+ * Google Geocoding. Worth the money for one reason: `location_type` says how the
+ * answer was arrived at, so precision is read off the response rather than
+ * inferred from whether a house number happened to match.
+ *
+ *   ROOFTOP            the building itself          -> building
+ *   RANGE_INTERPOLATED estimated along the block    -> street
+ *   GEOMETRIC_CENTER   centre of a street or region -> street
+ *   APPROXIMATE        a locality                   -> area
+ *
+ * `RANGE_INTERPOLATED` is usually close, but it is an interpolation and this
+ * module's whole point is not to sell an estimate as a measurement — so it lands
+ * on `street`, alongside "right road, wrong number".
+ */
+const GOOGLE_PRECISION: Record<string, Precision> = {
+  ROOFTOP: "building",
+  RANGE_INTERPOLATED: "street",
+  GEOMETRIC_CENTER: "street",
+  APPROXIMATE: "area",
+};
+
+async function googleGeocode(query: string): Promise<GeoResult | null> {
+  if (!GOOGLE_KEY) {
+    throw new Error(
+      "REALESTATE_MCP_GEOCODER=google but GOOGLE_MAPS_API_KEY is not set. Create a " +
+        "server key in the Google Cloud console with the Geocoding API enabled, or unset " +
+        "REALESTATE_MCP_GEOCODER to use Photon (no key needed).",
+    );
+  }
+
+  const q = expandStreetTypes(query);
+  const url =
+    `${GOOGLE_GEOCODE_URL}?region=au&components=country:AU` +
+    `&address=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_KEY)}`;
+
+  const res = await fetch(url, {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Google Geocoding HTTP ${res.status}`);
+
+  const body = (await res.json()) as {
+    status?: string;
+    error_message?: string;
+    results?: Array<{
+      geometry?: { location?: { lat?: number; lng?: number }; location_type?: string };
+      address_components?: Array<{ types?: string[]; long_name?: string; short_name?: string }>;
+    }>;
+  };
+
+  // ZERO_RESULTS is a legitimate answer; a key or quota problem is not, and
+  // must not be swallowed into "this address does not exist".
+  if (body.status === "ZERO_RESULTS") return null;
+  if (body.status && body.status !== "OK") {
+    throw new Error(`Google Geocoding ${body.status}${body.error_message ? `: ${body.error_message}` : ""}`);
+  }
+
+  const wantPost = wantedPostcode(q);
+
+  for (const hit of body.results ?? []) {
+    const loc = hit.geometry?.location;
+    if (loc?.lat == null || loc.lng == null) continue;
+
+    // Same guard as the OSM geocoders: a wrong postcode means a right-looking
+    // street in the wrong suburb, and Sydney has plenty of those.
+    if (wantPost) {
+      const postcode = hit.address_components?.find((c) => c.types?.includes("postal_code"));
+      if (postcode?.long_name && postcode.long_name !== wantPost) continue;
+    }
+
+    return {
+      lat: loc.lat,
+      lng: loc.lng,
+      precision: GOOGLE_PRECISION[hit.geometry?.location_type ?? ""] ?? "area",
+    };
+  }
+
+  return null;
+}
+
 let geocodeCalls = 0;
 
-/** Geocode one address string, trying the primary geocoder then the fallback. */
-async function geocodeUncached(query: string): Promise<GeoResult | null> {
-  const primary = GEOCODER === "nominatim" ? nominatimGeocode : photonGeocode;
-  const secondary = GEOCODER === "nominatim" ? photonGeocode : nominatimGeocode;
-  const primaryDelay = GEOCODER === "nominatim" ? NOMINATIM_DELAY_MS : PHOTON_DELAY_MS;
+type Geocoder = { name: "osm" | "google"; run: (q: string) => Promise<GeoResult | null>; delay: number };
 
-  try {
-    geocodeCalls++;
-    const hit = await primary(query);
-    await sleep(primaryDelay);
-    // A suburb centroid is barely better than nothing — try the other one first.
-    if (hit && hit.precision !== "area") return hit;
+const PHOTON: Geocoder = { name: "osm", run: photonGeocode, delay: PHOTON_DELAY_MS };
+const NOMINATIM: Geocoder = { name: "osm", run: nominatimGeocode, delay: NOMINATIM_DELAY_MS };
+/** Google is rate-limited generously; the delay is courtesy, not policy. */
+const GOOGLE: Geocoder = { name: "google", run: googleGeocode, delay: 50 };
+
+/**
+ * Primary geocoder first, then the other free one as a fallback.
+ *
+ * Google is never used as a *fallback* for an OSM primary, only as an explicit
+ * primary. Falling back to it silently would spend money the caller did not ask
+ * to spend, and would quietly put a 30-day expiry on cache entries the caller
+ * believes are permanent.
+ */
+function geocoderChain(): Geocoder[] {
+  if (GEOCODER === "google") return [GOOGLE, PHOTON];
+  if (GEOCODER === "nominatim") return [NOMINATIM, PHOTON];
+  return [PHOTON, NOMINATIM];
+}
+
+/** Geocode one address string, trying the primary geocoder then the fallback. */
+async function geocodeUncached(query: string): Promise<(GeoResult & { src: "osm" | "google" }) | null> {
+  const [primary, secondary] = geocoderChain();
+  let best: (GeoResult & { src: "osm" | "google" }) | null = null;
+
+  for (const geocoder of [primary, secondary]) {
     try {
       geocodeCalls++;
-      const alt = await secondary(query);
-      await sleep(GEOCODER === "nominatim" ? PHOTON_DELAY_MS : NOMINATIM_DELAY_MS);
-      if (alt && alt.precision !== "area") return alt;
-      return hit ?? alt;
+      const hit = await geocoder.run(query);
+      await sleep(geocoder.delay);
+      if (hit) {
+        const tagged = { ...hit, src: geocoder.name };
+        // A suburb centroid is barely better than nothing — keep it, but try the
+        // other geocoder before settling for it.
+        if (hit.precision !== "area") return tagged;
+        best ??= tagged;
+      }
     } catch {
-      return hit;
+      // A dead geocoder must not sink the run; the next one gets a turn, and
+      // an unresolvable address ends up counted rather than invented.
     }
-  } catch {
-    return null;
   }
+
+  return best;
 }
 
 const LATLNG_RE = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/;
@@ -381,11 +542,14 @@ async function geocodeCached(query: string): Promise<GeoResult | null> {
   const c = loadCache();
   const k = query.trim().toLowerCase();
   const hit = c.geo[k];
-  if (hit) return hit;
+  // Buildings do not move, so an OSM hit is good forever. A Google one is good
+  // for 30 days, because that is what its licence allows.
+  if (hit && !geoExpired(hit)) return hit;
 
   const fresh = await geocodeUncached(query);
-  if (!fresh) return null;
-  c.geo[k] = fresh;
+  if (!fresh) return hit && hit.src !== "google" ? hit : null;
+
+  c.geo[k] = { ...fresh, at: Date.now() };
   cacheDirty = true;
   return fresh;
 }
@@ -399,6 +563,7 @@ async function valhallaMatrix(
   targets: Coord[],
   mode: TravelMode,
 ): Promise<MatrixLeg[]> {
+  if (mode === "transit") throw new Error("Valhalla cannot answer transit — see googleMatrix");
   const res = await fetch(VALHALLA_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": UA },
@@ -426,6 +591,7 @@ async function valhallaMatrix(
 }
 
 async function orsMatrix(origin: Coord, targets: Coord[], mode: TravelMode): Promise<MatrixLeg[]> {
+  if (mode === "transit") throw new Error("OpenRouteService cannot answer transit — see googleMatrix");
   if (!ORS_KEY) {
     throw new Error(
       "REALESTATE_MCP_ROUTER=ors but ORS_API_KEY is not set. Get a free key at " +
@@ -463,7 +629,137 @@ async function orsMatrix(origin: Coord, targets: Coord[], mode: TravelMode): Pro
   });
 }
 
-const matrix = ROUTER === "ors" ? orsMatrix : valhallaMatrix;
+const GOOGLE_TRAVEL_MODE: Record<TravelMode, string> = {
+  walk: "WALK",
+  drive: "DRIVE",
+  transit: "TRANSIT",
+};
+
+/**
+ * Google Routes, Compute Route Matrix.
+ *
+ * The only router here that can answer `transit`, and the reason is worth
+ * stating: Sydney public transport time is a timetable lookup, not a distance
+ * calculation, so no road router can approximate it and none should try.
+ *
+ * `arriveBy` matters more than it looks. A train time is meaningless without a
+ * moment to measure it at — "34 minutes" on a Tuesday at 9am and at 3am on a
+ * Sunday are different facts about the same pair of points. It is required for
+ * transit rather than defaulted, so nobody accidentally compares a commute
+ * against the overnight timetable.
+ *
+ * A field mask is mandatory on this API; omitting it is an error, not a default.
+ * `condition` is what separates "no route exists" from "the element failed",
+ * and both come back inside a 200 alongside the elements that worked.
+ */
+/**
+ * Everything that makes a request impossible rather than merely unlucky.
+ * Exported so `enrichWithTravel` can run it up front — see the note there.
+ */
+export function assertRoutable(mode: TravelMode, arriveBy?: string): void {
+  const needsGoogle = mode === "transit" || ROUTER === "google";
+  if (needsGoogle && !GOOGLE_KEY) {
+    throw new Error(
+      mode === "transit"
+        ? "transit needs GOOGLE_MAPS_API_KEY — no free router does public transport, and " +
+          "estimating it from road distance would be a guess dressed as a measurement. " +
+          "Create a server key with the Routes API enabled."
+        : "REALESTATE_MCP_ROUTER=google but GOOGLE_MAPS_API_KEY is not set. Unset it to use " +
+          "Valhalla (no key needed).",
+    );
+  }
+  if (mode === "transit" && !arriveBy) {
+    throw new Error(
+      "transit needs an arrival time — pass `travelArriveBy` as an RFC 3339 timestamp, " +
+        'e.g. "2026-08-25T09:00:00+10:00". Without one the answer would be measured against ' +
+        "whatever timetable happens to be running now.",
+    );
+  }
+  if (arriveBy && Number.isNaN(Date.parse(arriveBy))) {
+    throw new Error(`travelArriveBy "${arriveBy}" is not a parseable RFC 3339 timestamp`);
+  }
+}
+
+async function googleMatrix(
+  origin: Coord,
+  targets: Coord[],
+  mode: TravelMode,
+  arriveBy?: string,
+): Promise<MatrixLeg[]> {
+  assertRoutable(mode, arriveBy);
+
+  const body: Record<string, unknown> = {
+    origins: [{ waypoint: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } } }],
+    destinations: targets.map((t) => ({
+      waypoint: { location: { latLng: { latitude: t.lat, longitude: t.lng } } },
+    })),
+    travelMode: GOOGLE_TRAVEL_MODE[mode],
+  };
+  // Only transit takes a clock. Sending one for DRIVE would silently switch the
+  // request to a traffic-aware SKU at twice the price.
+  if (mode === "transit") body.arrivalTime = arriveBy;
+
+  const res = await fetch(GOOGLE_ROUTES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": GOOGLE_KEY as string,
+      "X-Goog-FieldMask": "originIndex,destinationIndex,duration,distanceMeters,status,condition",
+      "User-Agent": UA,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`Google Routes HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+
+  const elements = (await res.json()) as Array<{
+    originIndex?: number;
+    destinationIndex?: number;
+    duration?: string;
+    distanceMeters?: number;
+    condition?: string;
+    status?: { code?: number; message?: string };
+  }>;
+
+  const legs: MatrixLeg[] = targets.map(() => null);
+  for (const element of elements) {
+    const i = element.destinationIndex;
+    if (i == null || i < 0 || i >= targets.length) continue;
+    // A failed element and a genuine "no route" both mean we do not know, and
+    // both must stay null rather than becoming a zero.
+    if (element.status?.code) continue;
+    if (element.condition && element.condition !== "ROUTE_EXISTS") continue;
+    const seconds = Number.parseFloat(element.duration ?? "");
+    if (!Number.isFinite(seconds)) continue;
+    legs[i] = { minutes: seconds / 60, km: (element.distanceMeters ?? 0) / 1000 };
+  }
+
+  return legs;
+}
+
+/**
+ * Transit always goes to Google regardless of `REALESTATE_MCP_ROUTER`, because
+ * it is the only one that can answer it — asking Valhalla for a train time would
+ * silently return a walking time.
+ */
+function matrix(
+  origin: Coord,
+  targets: Coord[],
+  mode: TravelMode,
+  arriveBy?: string,
+): Promise<MatrixLeg[]> {
+  if (mode === "transit" || ROUTER === "google") {
+    return googleMatrix(origin, targets, mode, arriveBy);
+  }
+  return ROUTER === "ors" ? orsMatrix(origin, targets, mode) : valhallaMatrix(origin, targets, mode);
+}
+
+/** What actually answered, for the report — `REALESTATE_MCP_ROUTER` may not be it. */
+function routerFor(mode: TravelMode): string {
+  return mode === "transit" ? "google" : ROUTER;
+}
 
 /* ---------------------------------------------------------------- enrich -- */
 
@@ -488,7 +784,20 @@ export async function enrichWithTravel<T extends Locatable>(
   items: T[],
   originQuery: string,
   mode: TravelMode,
+  /**
+   * RFC 3339 moment to arrive by. Required for `transit` and ignored otherwise —
+   * see `googleMatrix` for why a train time without a clock is not a fact.
+   */
+  arriveBy?: string,
 ): Promise<TravelReport> {
+  // Checked here, before any work, and thrown rather than noted. The per-chunk
+  // handler below deliberately absorbs a routing failure so an outage cannot
+  // cost the caller their search results — but a missing key is not an outage.
+  // Absorbed, it would hand back every listing with `travel: null`, which
+  // `maxTravelMinutes` keeps rather than drops, and a transit search would
+  // silently return the whole unfiltered set as though everything matched.
+  assertRoutable(mode, arriveBy);
+
   geocodeCalls = 0;
   const origin = await resolveOrigin(originQuery);
   const c = loadCache();
@@ -513,7 +822,7 @@ export async function enrichWithTravel<T extends Locatable>(
   const report: TravelReport = {
     origin: { query: originQuery, lat: origin.lat, lng: origin.lng, precision: origin.precision },
     mode,
-    router: ROUTER,
+    router: routerFor(mode),
     geocoder: GEOCODER,
     listings: items.length,
     uniqueBuildings: buildings.size,
@@ -537,7 +846,7 @@ export async function enrichWithTravel<T extends Locatable>(
     item.coords = { lat: geo.lat, lng: geo.lng };
     precisionOf.set(item, geo.precision);
 
-    const hit = c.routes[routeKey(mode, origin, item.coords)];
+    const hit = c.routes[routeKey(mode, origin, item.coords, arriveBy)];
     if (hit) {
       item.travel = {
         minutes: Math.round(hit.minutes * 10) / 10,
@@ -551,13 +860,14 @@ export async function enrichWithTravel<T extends Locatable>(
   }
 
   // Pass 3 — one matrix request per chunk of uncached destinations.
-  for (const group of chunk(misses, MAX_TARGETS)) {
+  for (const group of chunk(misses, targetsPerCall(mode))) {
     if (report.matrixCalls > 0) await sleep(CHUNK_DELAY_MS);
     try {
       const legs = await matrix(
         origin,
         group.map((g) => g.coord),
         mode,
+        arriveBy,
       );
       report.matrixCalls++;
       group.forEach((g, i) => {
@@ -572,7 +882,7 @@ export async function enrichWithTravel<T extends Locatable>(
           mode,
           precision: precisionOf.get(g.item) ?? "area",
         };
-        c.routes[routeKey(mode, origin, g.coord)] = { minutes: leg.minutes, km: leg.km };
+        c.routes[routeKey(mode, origin, g.coord, arriveBy)] = { minutes: leg.minutes, km: leg.km };
         cacheDirty = true;
       });
     } catch (e) {
