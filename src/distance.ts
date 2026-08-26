@@ -64,9 +64,19 @@ export interface Coord {
 }
 
 /**
- * `transit` is Google-only — no free router does public transport, and the
- * free ones would have to fake it from road distance, which is exactly the kind
- * of invented precision this module exists to prevent.
+ * `transit` is answered by **TfNSW's Trip Planner** when `TFNSW_API_KEY` is set,
+ * and by Google otherwise.
+ *
+ * This used to read "transit is Google-only — no free router does public
+ * transport". That was wrong about the free part and, more importantly, about
+ * what was being bought. Google's batched endpoint returns a duration and a
+ * distance and no legs at any field mask, so `mode` was only ever the mode
+ * *requested*, echoed back: a train, a ferry and a walk that Google answered a
+ * transit question with were indistinguishable. TfNSW answers in legs with a
+ * product class each, free, at 60,000 calls a day. See `tfnsw.ts`.
+ *
+ * Road modes never come here — no free router does public transport, but plenty
+ * do roads, and they batch.
  */
 export type TravelMode = "walk" | "drive" | "transit";
 
@@ -81,6 +91,12 @@ export interface Travel {
   km: number;
   mode: TravelMode;
   precision: Precision;
+  /**
+   * What the journey is made of, when it was measured by a provider that says.
+   * Present on `transit` answered by TfNSW; absent on road modes, which have no
+   * legs, and on transit answered by Google, which does not report them.
+   */
+  journey?: Journey;
 }
 
 export interface TravelReport {
@@ -105,6 +121,17 @@ export interface TravelReport {
   cachedBuildings: number;
   notes?: string[];
 }
+
+import {
+  DEFAULT_WALK_SPEED_KMH,
+  type Journey,
+  TfnswError,
+  fastestJourney,
+  journeyMinutes,
+  tfnswKey,
+  tripJourneys,
+  MIN_REQUEST_INTERVAL_MS as TFNSW_MIN_INTERVAL_MS,
+} from "./tfnsw.js";
 
 const CACHE_PATH =
   process.env.REALESTATE_MCP_DISTANCE_CACHE ??
@@ -162,7 +189,7 @@ interface CachedGeo {
 }
 
 interface CacheShape {
-  routes: Record<string, { minutes: number; km: number }>;
+  routes: Record<string, { minutes: number; km: number; journey?: Journey }>;
   geo: Record<string, CachedGeo>;
 }
 
@@ -199,8 +226,20 @@ const r5 = (n: number): number => Math.round(n * 1e5) / 1e5;
  * replaying it for a Sunday midnight one would be worse than not caching at all.
  * Road modes ignore it — free-flow routing has no clock.
  */
-const routeKey = (mode: TravelMode, o: Coord, d: Coord, when?: string): string =>
-  `${mode}|${when ?? ""}|${r5(o.lat)},${r5(o.lng)}|${r5(d.lat)},${r5(d.lng)}`;
+const routeKey = (mode: TravelMode, o: Coord, d: Coord, when?: string, provider?: string): string =>
+  `${provider ? `${mode}:${provider}` : mode}|${when ?? ""}|${r5(o.lat)},${r5(o.lng)}|${r5(d.lat)},${r5(d.lng)}`;
+
+/**
+ * TfNSW answers are namespaced `transit:tfnsw` rather than sharing `transit`.
+ *
+ * The cache on disk predates legs — thousands of `{ minutes, km }` entries
+ * written when transit meant Google. Reusing the key would let one of them
+ * satisfy a request that needs a journey, and the caller would get a hit, no
+ * legs, and no error: the whole measurement silently doing nothing while
+ * appearing to work. A separate namespace makes that impossible, at the cost of
+ * some dead entries that a caller can delete whenever they like.
+ */
+const TFNSW_PROVIDER = "tfnsw";
 
 /** True once a Google-sourced position has passed the 30 days its licence allows. */
 function geoExpired(hit: CachedGeo): boolean {
@@ -556,7 +595,7 @@ async function geocodeCached(query: string): Promise<GeoResult | null> {
 
 /* ---------------------------------------------------------------- routers -- */
 
-type MatrixLeg = { minutes: number; km: number } | null;
+type MatrixLeg = { minutes: number; km: number; journey?: Journey } | null;
 
 async function valhallaMatrix(
   origin: Coord,
@@ -657,13 +696,15 @@ const GOOGLE_TRAVEL_MODE: Record<TravelMode, string> = {
  * Exported so `enrichWithTravel` can run it up front — see the note there.
  */
 export function assertRoutable(mode: TravelMode, arriveBy?: string): void {
-  const needsGoogle = mode === "transit" || ROUTER === "google";
+  const needsGoogle = (mode === "transit" && !transitUsesTfnsw()) || ROUTER === "google";
   if (needsGoogle && !GOOGLE_KEY) {
     throw new Error(
       mode === "transit"
-        ? "transit needs GOOGLE_MAPS_API_KEY — no free router does public transport, and " +
-          "estimating it from road distance would be a guess dressed as a measurement. " +
-          "Create a server key with the Routes API enabled."
+        ? "transit needs either TFNSW_API_KEY or GOOGLE_MAPS_API_KEY. Prefer TfNSW: it is free " +
+          "(60,000 calls a day), it is the operator's own planner, and it reports the journey's " +
+          "legs, so a ferry is a measured fact rather than a guess. Get one at " +
+          "opendata.transport.nsw.gov.au and add the Trip Planner APIs to an application. " +
+          "Estimating transit from road distance is never an option here."
         : "REALESTATE_MCP_ROUTER=google but GOOGLE_MAPS_API_KEY is not set. Unset it to use " +
           "Valhalla (no key needed).",
     );
@@ -740,9 +781,17 @@ async function googleMatrix(
 }
 
 /**
- * Transit always goes to Google regardless of `REALESTATE_MCP_ROUTER`, because
- * it is the only one that can answer it — asking Valhalla for a train time would
- * silently return a walking time.
+ * Transit never goes to the road routers regardless of `REALESTATE_MCP_ROUTER` —
+ * asking Valhalla for a train time would silently return a walking time. It goes
+ * to TfNSW when `TFNSW_API_KEY` is set and Google otherwise.
+ *
+ * **The TfNSW path measures `targets → origin`, not `origin → targets`.** That
+ * is deliberate and it is not what the Google path does. `googleMatrix` indexes
+ * by `destinationIndex` and asks "leave the origin, reach each target by
+ * `arriveBy`" — which for a commute origin like an office is the evening trip
+ * home, not the morning trip in. Walk and drive are symmetric enough for that
+ * not to matter; a peak timetable is not. `manyToOne` already gets this right
+ * for `route_places`, and this brings the enrichment path into line with it.
  */
 function matrix(
   origin: Coord,
@@ -750,15 +799,29 @@ function matrix(
   mode: TravelMode,
   arriveBy?: string,
 ): Promise<MatrixLeg[]> {
-  if (mode === "transit" || ROUTER === "google") {
+  if (mode === "transit") {
+    const key = tfnswKey();
+    if (key) return tfnswManyToOne(targets, origin, arriveBy as string, key);
     return googleMatrix(origin, targets, mode, arriveBy);
   }
+  if (ROUTER === "google") return googleMatrix(origin, targets, mode, arriveBy);
   return ROUTER === "ors" ? orsMatrix(origin, targets, mode) : valhallaMatrix(origin, targets, mode);
+}
+
+/** Whether transit goes to TfNSW. Falls back to Google when no key is set. */
+function transitUsesTfnsw(): boolean {
+  return tfnswKey() !== undefined;
 }
 
 /** What actually answered, for the report — `REALESTATE_MCP_ROUTER` may not be it. */
 function routerFor(mode: TravelMode): string {
-  return mode === "transit" ? "google" : ROUTER;
+  if (mode !== "transit") return ROUTER;
+  return transitUsesTfnsw() ? "tfnsw" : "google";
+}
+
+/** The cache namespace for a mode. Only TfNSW transit takes one — see `TFNSW_PROVIDER`. */
+function providerFor(mode: TravelMode): string | undefined {
+  return mode === "transit" && transitUsesTfnsw() ? TFNSW_PROVIDER : undefined;
 }
 
 /* ---------------------------------------------------------------- enrich -- */
@@ -846,13 +909,14 @@ export async function enrichWithTravel<T extends Locatable>(
     item.coords = { lat: geo.lat, lng: geo.lng };
     precisionOf.set(item, geo.precision);
 
-    const hit = c.routes[routeKey(mode, origin, item.coords, arriveBy)];
+    const hit = c.routes[routeKey(mode, origin, item.coords, arriveBy, providerFor(mode))];
     if (hit) {
       item.travel = {
         minutes: Math.round(hit.minutes * 10) / 10,
         km: Math.round(hit.km * 100) / 100,
         mode,
         precision: geo.precision,
+        ...(hit.journey ? { journey: hit.journey } : {}),
       };
     } else {
       misses.push({ item, coord: item.coords });
@@ -881,8 +945,13 @@ export async function enrichWithTravel<T extends Locatable>(
           km: Math.round(leg.km * 100) / 100,
           mode,
           precision: precisionOf.get(g.item) ?? "area",
+          ...(leg.journey ? { journey: leg.journey } : {}),
         };
-        c.routes[routeKey(mode, origin, g.coord, arriveBy)] = { minutes: leg.minutes, km: leg.km };
+        c.routes[routeKey(mode, origin, g.coord, arriveBy, providerFor(mode))] = {
+          minutes: leg.minutes,
+          km: leg.km,
+          ...(leg.journey ? { journey: leg.journey } : {}),
+        };
         cacheDirty = true;
       });
     } catch (e) {
@@ -937,6 +1006,12 @@ export interface PlaceLeg {
   id: string;
   minutes: number;
   km: number;
+  /**
+   * What the journey is made of, when the provider says. Present on `transit`
+   * answered by TfNSW; absent on road modes and on Google-answered transit,
+   * neither of which reports legs.
+   */
+  journey?: Journey;
 }
 
 export interface RoutePlacesReport {
@@ -964,6 +1039,45 @@ export interface RoutePlacesReport {
  * Walk and drive are symmetric enough to ask the configured router the other way
  * round, which is why only the Google path is written out here.
  */
+/**
+ * Transit, one origin at a time, from TfNSW.
+ *
+ * `computeRouteMatrix` takes a thousand origins in a request; the Trip Planner
+ * takes one. That is the price of legs, and at 5 requests a second against a
+ * 60,000-a-day allowance it is affordable for the few hundred origins a commute
+ * question asks about. One origin failing leaves the rest measured — where a
+ * failed matrix call loses the whole batch.
+ */
+async function tfnswManyToOne(
+  origins: Coord[],
+  destination: Coord,
+  arriveBy: string,
+  key: string,
+): Promise<MatrixLeg[]> {
+  const when = new Date(arriveBy);
+  const out: MatrixLeg[] = [];
+  for (const [index, origin] of origins.entries()) {
+    if (index > 0) await sleep(TFNSW_MIN_INTERVAL_MS);
+    try {
+      const journey = fastestJourney(await tripJourneys(origin, destination, when, key));
+      out.push(
+        journey
+          ? {
+              minutes: journeyMinutes(journey, DEFAULT_WALK_SPEED_KMH),
+              km: journey.metres / 1000,
+              journey,
+            }
+          : null,
+      );
+    } catch (e) {
+      // A bad key is not a fact about this origin, and will not fix itself.
+      if (e instanceof TfnswError && e.fatal) throw e;
+      out.push(null);
+    }
+  }
+  return out;
+}
+
 async function manyToOne(
   origins: Coord[],
   destination: Coord,
@@ -974,6 +1088,11 @@ async function manyToOne(
     return matrix(destination, origins, mode);
   }
   assertRoutable(mode, arriveBy);
+
+  if (mode === "transit") {
+    const key = tfnswKey();
+    if (key) return tfnswManyToOne(origins, destination, arriveBy as string, key);
+  }
 
   const body: Record<string, unknown> = {
     origins: origins.map((o) => ({
@@ -1055,7 +1174,7 @@ export async function routePlaces(
   let cachedLegs = 0;
 
   for (const place of origins) {
-    const hit = c.routes[routeKey(mode, place.coord, destination, arriveBy)];
+    const hit = c.routes[routeKey(mode, place.coord, destination, arriveBy, providerFor(mode))];
     if (!hit) {
       misses.push(place);
       continue;
@@ -1065,6 +1184,7 @@ export async function routePlaces(
       id: place.id,
       minutes: Math.round(hit.minutes * 10) / 10,
       km: Math.round(hit.km * 100) / 100,
+      ...(hit.journey ? { journey: hit.journey } : {}),
     });
   }
 
@@ -1091,12 +1211,13 @@ export async function routePlaces(
         unroutable.push(place.id);
         return;
       }
-      c.routes[routeKey(mode, place.coord, destination, arriveBy)] = leg;
+      c.routes[routeKey(mode, place.coord, destination, arriveBy, providerFor(mode))] = leg;
       cacheDirty = true;
       legs.push({
         id: place.id,
         minutes: Math.round(leg.minutes * 10) / 10,
         km: Math.round(leg.km * 100) / 100,
+        ...(leg.journey ? { journey: leg.journey } : {}),
       });
     });
     await sleep(CHUNK_DELAY_MS);

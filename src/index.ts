@@ -292,7 +292,12 @@ server.registerTool(
       "arriving somewhere by 9am is not the same trip as leaving there at 9am. " +
       "Results are cached on disk and deduped, so re-asking is free. A suburb " +
       "centroid is an area-level position by nature: fine for picking a search " +
-      "envelope, never quote it as a listing's commute.",
+      "envelope, never quote it as a listing's commute. " +
+      "With travelMode:transit each leg also carries a `journey` — the actual " +
+      "sequence of walks and services with their product classes, service names " +
+      "and stops, plus isWalk, hasFerry and interchanges. So you can tell a " +
+      "ferry from a train from a 'transit' answer that is really just a walk, " +
+      "instead of trusting the mode you asked for.",
     inputSchema: {
       places: z
         .array(
