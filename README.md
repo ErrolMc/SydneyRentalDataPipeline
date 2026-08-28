@@ -90,6 +90,11 @@ Two things that will bite you if you modify the parser:
 
 ## Configuration
 
+Set these in the `env` block of your MCP entry, or in a `.env` at this package's
+root — copy `.env.example`. The environment wins over the file, which is read
+from the package root regardless of where the server was spawned from. Keys
+belong in `.env`; it is gitignored.
+
 | Env var | Default | Purpose |
 |---|---|---|
 | `REALESTATE_MCP_PROFILE` | `~/.realestate-mcp/profile` | Where the warm browser profile lives |
@@ -97,7 +102,8 @@ Two things that will bite you if you modify the parser:
 | `REALESTATE_MCP_TIMEOUT` | `60000` | Navigation timeout in ms |
 | `REALESTATE_MCP_ROUTER` | `valhalla` | `valhalla` (no key), `ors` (needs `ORS_API_KEY`), or `google` (needs `GOOGLE_MAPS_API_KEY`) |
 | `REALESTATE_MCP_GEOCODER` | `photon` | `photon`, `nominatim`, or `google`. Google is markedly better on Australian unit addresses, which is what decides whether a travel time is measured or a suburb centroid |
-| `GOOGLE_MAPS_API_KEY` | — | Server key with the **Routes API** and **Geocoding API** enabled. Required for `travelMode: "transit"` in any configuration. Never use a browser key here — a referrer-restricted key cannot sign server-side calls, and a key that works server-side must never be shipped to a browser |
+| `TFNSW_API_KEY` | — | Transport for NSW Trip Planner key, and what answers `travelMode: "transit"` whenever it is set. It returns the journey in **legs**, each with a product class, so a walk is distinguishable from a ferry crossing; Google returns a duration and nothing else. Free at 60,000 calls/day — opendata.transport.nsw.gov.au, create an application, add **Trip Planner APIs** |
+| `GOOGLE_MAPS_API_KEY` | — | Server key with the **Routes API** and **Geocoding API** enabled. Required for `travelMode: "transit"` unless `TFNSW_API_KEY` is set, and used as the fallback when it is not. Never use a browser key here — a referrer-restricted key cannot sign server-side calls, and a key that works server-side must never be shipped to a browser |
 | `ORS_API_KEY` | — | Only read when `REALESTATE_MCP_ROUTER=ors` |
 | `REALESTATE_MCP_IDLE` | `30000` | Idle ms before the browser closes and releases the profile lock |
 

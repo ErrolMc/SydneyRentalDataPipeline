@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Must stay first: fills process.env from `.env` before the modules below read
+// it at import time. See src/env.ts.
+import "./env.js";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

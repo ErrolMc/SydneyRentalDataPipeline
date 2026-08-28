@@ -2,6 +2,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# API keys — never commit. `.env.example` is the template, and carries no values
+.env
+.env.*
+!.env.example
+
 # Browser profile holds the Kasada token + cookies — never commit
 .profile/
 profile-*/
