@@ -228,9 +228,10 @@ interface CacheShape {
        * Whether a ferry serves this pair, once asked. Written only for walks
        * fast enough to be suspect, so `undefined` means "never asked" rather
        * than "no" — which is what lets entries written before this existed be
-       * re-examined instead of silently passing.
+       * re-examined instead of silently passing. Transit entries carry the same
+       * fact inside `journey`, where it came free with the trip.
        */
-      ferryServed?: boolean;
+      ferryAvailable?: boolean;
     }
   >;
   geo: Record<string, CachedGeo>;
@@ -956,7 +957,7 @@ async function flagMislabelledWalks(audits: WalkAudit[], arriveBy?: string): Pro
 
   for (const { audit, kmh } of suspects) {
     const cached = c.routes[audit.cacheKey];
-    let served = cached?.ferryServed;
+    let served = cached?.ferryAvailable;
 
     if (served === undefined) {
       if (probes > 0) await sleep(TFNSW_MIN_INTERVAL_MS);
@@ -970,7 +971,7 @@ async function flagMislabelledWalks(audits: WalkAudit[], arriveBy?: string): Pro
         continue;
       }
       if (cached) {
-        cached.ferryServed = served;
+        cached.ferryAvailable = served;
         cacheDirty = true;
       }
     }
@@ -1251,13 +1252,21 @@ async function tfnswManyToOne(
   for (const [index, origin] of origins.entries()) {
     if (index > 0) await sleep(TFNSW_MIN_INTERVAL_MS);
     try {
-      const journey = fastestJourney(await tripJourneys(origin, destination, when, key));
+      // `ferryAvailable` is read off the whole list, which is the only place it
+      // exists — one journey cannot say whether a ferry serves the pair.
+      const journeys = await tripJourneys(origin, destination, when, key);
+      const served = ferryAvailable(journeys);
+      const fastest = fastestJourney(journeys);
       out.push(
-        journey
+        fastest
           ? {
-              minutes: journeyMinutes(journey, DEFAULT_WALK_SPEED_KMH),
-              km: journey.metres / 1000,
-              journey,
+              minutes: journeyMinutes(fastest, DEFAULT_WALK_SPEED_KMH),
+              km: fastest.metres / 1000,
+              journey: {
+                ...fastest,
+                ferryAvailable: served,
+                walkSpeedKmh: DEFAULT_WALK_SPEED_KMH,
+              },
             }
           : null,
       );

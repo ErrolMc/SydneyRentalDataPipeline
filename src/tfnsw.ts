@@ -115,6 +115,22 @@ export interface Journey {
   interchanges: number;
   /** Whole-journey metres, summed along each leg's returned path. */
   metres: number;
+  /**
+   * Whether a ferry serves this pair at all — across every journey the planner
+   * offered, not just this one. A fact about the *place* rather than about this
+   * journey, which is why it sits beside `hasFerry` rather than replacing it:
+   * three known addresses have a walk nobody could walk and a bus as their
+   * quickest way in, so `hasFerry` says no about the very trip that proves it.
+   *
+   * Set by whoever held the full list — `tripJourneys` returns one journey at a
+   * time and cannot know it.
+   */
+  ferryAvailable?: boolean;
+  /**
+   * The walking speed `minutes` was re-timed at, km/h. Reported so a caller
+   * never has to assume which assumption was used.
+   */
+  walkSpeedKmh?: number;
 }
 
 interface RawPlace {

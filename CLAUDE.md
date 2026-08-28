@@ -213,9 +213,10 @@ correction is an interpretation of them that a caller is entitled to reject.
 
 Needs `TFNSW_API_KEY`. Without it the check is skipped rather than half-run:
 speed alone is a suspicion, not a finding. The probe is cached on the route entry
-as `ferryServed`, so one pair is asked once; `undefined` there means *never
+as `ferryAvailable`, so one pair is asked once; `undefined` there means *never
 asked* rather than *no*, which is what lets entries written before this existed
-be re-examined instead of quietly passing.
+be re-examined instead of quietly passing. A transit journey carries the same
+fact inside `journey.ferryAvailable`, where the trip request supplied it free.
 
 ### Google's caching limit is a licence term, not a tuning knob
 
