@@ -166,8 +166,46 @@ const CACHE_PATH =
   process.env.REALESTATE_MCP_DISTANCE_CACHE ??
   join(homedir(), ".realestate-mcp", "distance-cache.json");
 
-const ROUTER = (process.env.REALESTATE_MCP_ROUTER ?? "valhalla").toLowerCase();
-const GEOCODER = (process.env.REALESTATE_MCP_GEOCODER ?? "photon").toLowerCase();
+// Trimmed as well as lowercased: a trailing space off a `.env` line is a
+// different string, and nobody has ever meant to configure "google ".
+const ROUTER = (process.env.REALESTATE_MCP_ROUTER ?? "valhalla").trim().toLowerCase();
+const GEOCODER = (process.env.REALESTATE_MCP_GEOCODER ?? "photon").trim().toLowerCase();
+
+/**
+ * Say something when one of those is a value we do not know.
+ *
+ * Both dispatches end in a bare else — `matrix` falls through to Valhalla and
+ * `geocoderChain` to Photon. Neither needs a key, so a typo does not fail. It
+ * quietly measures with a different provider than the caller asked for, and
+ * every number after it is subtly not what the committed ones were:
+ * `REALESTATE_MCP_ROUTER=tfnsw` looks like it should route transit and instead
+ * moves *walking* onto Valhalla, and a misspelled geocoder gives up Google's
+ * markedly better Australian unit addresses, which is what decides whether a
+ * travel time is measured or a suburb centroid.
+ *
+ * Warned rather than thrown. The fallbacks do work, and a server refusing to
+ * start over one misspelled variable would be worse than what it is guarding
+ * against. "configuration error" is deliberate wording: the findings repo's
+ * `McpClient` filters this server's stderr and only surfaces lines matching
+ * /error|refus|blocked|bot protection/, so anything softer would be swallowed
+ * by exactly the caller who needs to see it.
+ */
+function warnUnknownProvider(
+  name: string,
+  value: string,
+  known: readonly string[],
+  fallsBackTo: string,
+): void {
+  if (known.includes(value)) return;
+  console.error(
+    `[realestate-mcp] configuration error: ${name}="${value}" is not one of ` +
+      `${known.join(", ")}. Falling back to ${fallsBackTo}, which needs no key and will not ` +
+      `fail — so measurements will silently disagree with ones taken as intended.`,
+  );
+}
+
+warnUnknownProvider("REALESTATE_MCP_ROUTER", ROUTER, ["valhalla", "ors", "google"], "Valhalla");
+warnUnknownProvider("REALESTATE_MCP_GEOCODER", GEOCODER, ["photon", "nominatim", "google"], "Photon");
 const ORS_KEY = process.env.ORS_API_KEY;
 const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
