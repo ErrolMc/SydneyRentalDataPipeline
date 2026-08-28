@@ -103,7 +103,10 @@ server.registerTool(
         .optional()
         .describe(
           "Drop listings further than this from `travelFrom`. Listings that could not " +
-            "be routed are kept and reported, never silently discarded.",
+            "be routed are kept and reported, never silently discarded. What this DOES " +
+            "drop comes back under `filteredByTravel` — id, address and routed time only " +
+            "— so a caller keeping its own records can remember the rejection instead of " +
+            "paying to geocode and route the same listing again next time.",
         ),
       sortByTravel: z
         .boolean()
@@ -138,9 +141,30 @@ server.registerTool(
             const before = result.listings.length;
             // Only listings with a KNOWN time over the limit are dropped —
             // an unknown is not evidence of being far away.
-            result.listings = result.listings.filter(
-              (l) => l.travel == null || l.travel.minutes <= limit,
-            );
+            const kept: typeof result.listings = [];
+            const dropped: typeof result.listings = [];
+            for (const l of result.listings) {
+              (l.travel == null || l.travel.minutes <= limit ? kept : dropped).push(l);
+            }
+            result.listings = kept;
+            // What was dropped, small enough to be worth remembering.
+            //
+            // These were geocoded and routed at real cost, and dropping them
+            // silently meant that cost could only be remembered in the server's
+            // own cache — a store the caller cannot see, version or review. Sent
+            // back as identity and position only: enough to write down, far
+            // short of the full listing, which would make every search result
+            // several times larger for a caller that only wanted the matches.
+            result.filteredByTravel = dropped.map((l) => ({
+              id: l.id,
+              url: l.url,
+              address: l.address,
+              suburb: l.suburb,
+              state: l.state,
+              postcode: l.postcode,
+              coords: l.coords,
+              travel: l.travel,
+            }));
             report.notes = [
               ...(report.notes ?? []),
               `filtered to <=${limit} min ${mode}: ${before} -> ${result.listings.length}`,

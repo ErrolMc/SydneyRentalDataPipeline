@@ -117,6 +117,19 @@ export interface SearchResult {
   sourceUrl: string;
   /** Present only when `travelFrom` was supplied. Describes how times were derived. */
   travelReport?: unknown;
+  /**
+   * What `maxTravelMinutes` dropped — identity and position only, no
+   * description, features, agents or images.
+   *
+   * Present only when that filter ran. These listings cost a geocode and a
+   * routed leg to reject, and without them in the answer that cost is only
+   * recoverable from this server's own cache, which the caller cannot see,
+   * version or review. A caller keeping its own record can write them down
+   * instead and stop paying for the same rejection every run.
+   */
+  filteredByTravel?: Array<
+    Pick<Listing, "id" | "url" | "address" | "suburb" | "state" | "postcode" | "coords" | "travel">
+  >;
 }
 
 export interface LocationSuggestion {
