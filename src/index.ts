@@ -11,7 +11,7 @@ import { closeContext, fetchPage, NotWarmError } from "./browser.js";
 import { parseListingPage, parseSearchPage } from "./parse.js";
 import { buildListingUrl, buildSearchUrl, suggestLocations } from "./search.js";
 import { fetchImages, IMAGE_SIZES } from "./images.js";
-import { enrichWithTravel, routePlaces, type TravelMode } from "./distance.js";
+import { enrichWithTravel, geocodePlaces, routePlaces, type TravelMode } from "./distance.js";
 import type { Channel, SearchParams } from "./types.js";
 import { runSetup } from "./cli.js";
 
@@ -278,6 +278,51 @@ server.registerTool(
   async ({ query, max }) => {
     try {
       return ok(await suggestLocations(query, max));
+    } catch (e) {
+      return fail(explain(e));
+    }
+  },
+);
+
+server.registerTool(
+  "geocode_places",
+  {
+    title: "Coordinates for many place names",
+    description:
+      "Turn place names or addresses into coordinates — suburbs, streets, buildings. " +
+      "Different from resolve_location, which returns canonical REA suburb NAMES and no " +
+      "position at all; use that one to disambiguate before searching, and this one when " +
+      "you need somewhere on a map. Goes through the same provider chain and the same " +
+      "disk cache as travel measurement, so a position asked for twice costs one call, " +
+      "and each result says which provider actually answered rather than which was " +
+      "configured. `precision` is load-bearing: `area` means a locality centroid, which " +
+      "is the right answer for a suburb and the wrong thing to quote as a property's " +
+      "position. Anything nothing can place comes back under `unresolved` — never a " +
+      "guessed coordinate.",
+    inputSchema: {
+      queries: z
+        .array(z.string().min(1))
+        .min(1)
+        .max(500)
+        .describe(
+          'Place names or addresses, e.g. "Balmain, NSW 2041, Australia" or ' +
+            '"275 Kent Street, Sydney NSW 2000"',
+        ),
+      prefer: z
+        .enum(["precise", "locality"])
+        .default("precise")
+        .describe(
+          'What kind of point you want. "precise" takes the sharpest hit — right for an ' +
+            'address. "locality" takes the suburb centroid and treats a sharper hit as the ' +
+            'consolation prize — right for a place NAME, and not interchangeable: asking ' +
+            'precisely for "Westleigh, NSW 2120" can return a street inside Westleigh, ' +
+            "1.5km from its centre.",
+        ),
+    },
+  },
+  async ({ queries, prefer }) => {
+    try {
+      return ok(await geocodePlaces(queries, prefer === "locality"));
     } catch (e) {
       return fail(explain(e));
     }

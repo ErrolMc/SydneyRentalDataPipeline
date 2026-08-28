@@ -638,6 +638,61 @@ async function geocodeUncached(query: string): Promise<(GeoResult & { src: "osm"
   return best;
 }
 
+/**
+ * The centroid of a named place, as distinct from the position of an address.
+ *
+ * Deliberately **not** `geocodeUncached`. That one resolves addresses, and every
+ * heuristic in it — expanding street types, preferring a hit that names a road
+ * or a house number, treating `area` as the consolation prize — is tuned to
+ * reject exactly the answer wanted here. Pointed at "Westleigh, NSW 2120" it
+ * returns a street inside Westleigh, 1.5 km from the centre, and on 25 of 40
+ * sampled suburbs it matched nothing at all.
+ *
+ * So this asks the simple question instead: one result, take it. That is
+ * verbatim what the downstream pipeline's own `geocodeSuburb` did before this
+ * existed, down to the `limit=1` and the 6-decimal rounding, and it reproduces
+ * every centroid in that project's committed 398-place envelope to the metre.
+ * Being the same request is the point — a different gazetteer moves suburbs by a
+ * median of 241 m, which is a data change wearing a refactor's clothes.
+ *
+ * OSM only, for the same reason. Mixing gazetteers across one dataset would move
+ * some suburbs and not others, and OSM positions carry no licence expiry, so a
+ * centroid cached here is good until the suburb moves.
+ */
+async function localityGeocode(query: string): Promise<(GeoResult & { src: "osm" }) | null> {
+  geocodeCalls++;
+  const url =
+    "https://nominatim.openstreetmap.org/search" +
+    `?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=0`;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    await sleep(NOMINATIM_DELAY_MS);
+    if (!res.ok) return null;
+
+    const body = (await res.json()) as { lat?: string; lon?: string }[];
+    const first = body[0];
+    if (!first?.lat || !first?.lon) return null;
+
+    const lat = Number(first.lat);
+    const lng = Number(first.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    // 6 dp — about 10 cm, far finer than a centroid means, and what the callers
+    // downstream already store.
+    return {
+      lat: Number(lat.toFixed(6)),
+      lng: Number(lng.toFixed(6)),
+      precision: "area",
+      src: "osm",
+    };
+  } catch {
+    return null;
+  }
+}
+
 const LATLNG_RE = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/;
 
 /** Resolve an origin string. Accepts "lat,lng" directly to bypass geocoding. */
@@ -659,20 +714,31 @@ export async function resolveOrigin(query: string): Promise<GeoResult> {
   return hit;
 }
 
-async function geocodeCached(query: string): Promise<GeoResult | null> {
+/** A geocode plus where it came from, so a caller never has to assume. */
+type GeocodeHit = GeoResult & { src: "osm" | "google"; cached: boolean };
+
+async function geocodeCached(query: string, wantLocality = false): Promise<GeocodeHit | null> {
   const c = loadCache();
-  const k = query.trim().toLowerCase();
+  // Namespaced, for the same reason `transit:tfnsw` is: the two preferences ask
+  // different questions of the same string, and letting one answer satisfy the
+  // other would be a cache hit that is silently the wrong kind of point.
+  const k = (wantLocality ? "locality|" : "") + query.trim().toLowerCase();
   const hit = c.geo[k];
+  // Entries written before provenance was tracked carry no `src`; those are OSM,
+  // which is what they were.
+  const remembered: GeocodeHit | null = hit
+    ? { lat: hit.lat, lng: hit.lng, precision: hit.precision, src: hit.src ?? "osm", cached: true }
+    : null;
   // Buildings do not move, so an OSM hit is good forever. A Google one is good
   // for 30 days, because that is what its licence allows.
-  if (hit && !geoExpired(hit)) return hit;
+  if (hit && remembered && !geoExpired(hit)) return remembered;
 
-  const fresh = await geocodeUncached(query);
-  if (!fresh) return hit && hit.src !== "google" ? hit : null;
+  const fresh = wantLocality ? await localityGeocode(query) : await geocodeUncached(query);
+  if (!fresh) return remembered && remembered.src !== "google" ? remembered : null;
 
   c.geo[k] = { ...fresh, at: Date.now() };
   cacheDirty = true;
-  return fresh;
+  return { ...fresh, cached: false };
 }
 
 /* ---------------------------------------------------------------- routers -- */
@@ -1221,6 +1287,82 @@ export async function enrichWithTravel<T extends Locatable>(
   }
   if (notes.length) report.notes = notes;
   return report;
+}
+
+/* -------------------------------------------------------------- geocoding -- */
+
+export interface GeocodedPlace {
+  /** Echoed back, so a caller can match answers to questions without ordering. */
+  query: string;
+  lat: number;
+  lng: number;
+  /**
+   * `area` is the *correct* answer for a suburb — it is a centroid, and saying so
+   * is the difference between a measured position and an indicative one.
+   */
+  precision: Precision;
+  /** Which family answered: `google`, or `osm` for Photon and Nominatim. */
+  source: "osm" | "google";
+  /** Whether it came off the disk cache rather than a fresh call. */
+  cached: boolean;
+}
+
+export interface GeocodeReport {
+  /** What was configured — `source` on each result is what actually answered. */
+  geocoder: string;
+  places: number;
+  results: GeocodedPlace[];
+  /** Queries nothing could place. Never a guess standing in for a position. */
+  unresolved: string[];
+  geocodeCalls: number;
+}
+
+/**
+ * Geocode many queries, through the same cache and the same provider chain that
+ * routing already uses.
+ *
+ * Exists because the downstream pipeline had its own Nominatim client for suburb
+ * centroids while calling this server for everything else — the same split that
+ * put two Trip Planner clients in two repositories (ADR 0004 downstream). This
+ * one is strictly better than the copy it replaces: a provider chain rather than
+ * one provider, a disk cache, and `geoExpired` honouring Google's 30-day licence
+ * term on cached coordinates.
+ *
+ * Rate limiting is per-provider inside `geocodeUncached`, so a batch is no
+ * ruder than the same queries one at a time.
+ */
+export async function geocodePlaces(
+  queries: string[],
+  wantLocality = false,
+): Promise<GeocodeReport> {
+  geocodeCalls = 0;
+  const results: GeocodedPlace[] = [];
+  const unresolved: string[] = [];
+
+  for (const query of queries) {
+    let hit: GeocodeHit | null = null;
+    try {
+      hit = await geocodeCached(query, wantLocality);
+    } catch {
+      // A dead geocoder is not a fact about this place. It joins `unresolved`,
+      // which a caller must treat as "unknown", never as "nowhere".
+    }
+    if (!hit) {
+      unresolved.push(query);
+      continue;
+    }
+    results.push({
+      query,
+      lat: hit.lat,
+      lng: hit.lng,
+      precision: hit.precision,
+      source: hit.src,
+      cached: hit.cached,
+    });
+  }
+
+  flushCache();
+  return { geocoder: GEOCODER, places: queries.length, results, unresolved, geocodeCalls };
 }
 
 /* ----------------------------------------------------------------- places -- */
