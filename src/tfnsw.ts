@@ -253,6 +253,41 @@ export function describeJourney(journey: Journey): string {
     .join(" · ");
 }
 
+/**
+ * Whether a ferry serves this pair at all — across **every** journey offered,
+ * not just the fastest one.
+ *
+ * The distinction is the whole point. Three Balmain addresses have a walking
+ * time nobody could walk, and their quickest way in is a bus, so the chosen
+ * journey's own `hasFerry` says no and misses them. What confirms a mislabelled
+ * walk is that a ferry is *available* there, which this answers correctly on
+ * all six of the known cases and on neither control.
+ */
+export function ferryAvailable(journeys: readonly Journey[]): boolean {
+  return journeys.some((journey) => journey.hasFerry);
+}
+
+/**
+ * The routed speed above which a "walk" is not a walk, km/h.
+ *
+ * Derived, not chosen. Across 285 walks measured into one Sydney office, the
+ * 279 genuine ones sit between 4.053 and 4.625 km/h; the other six sit between
+ * 5.08 and 6.53, and **nothing at all** falls in the 0.44 km/h between. 4.85 is
+ * the middle of that empty band, leaving 0.22 either side against a worst-case
+ * rounding wobble of 0.11 on the shortest walk in the set.
+ *
+ * On its own it is a suspicion, not a finding — it says "too fast to be
+ * walking", which a router cutting a corner could also produce. `ferryAvailable`
+ * is what turns it into evidence.
+ */
+export const WALK_SUSPECT_KMH = 4.85;
+
+/** `km ÷ hours` for a routed walk. Zero-length or zero-time walks have no speed. */
+export function impliedSpeedKmh(km: number, minutes: number): number | null {
+  if (!(minutes > 0) || !(km > 0)) return null;
+  return km / (minutes / 60);
+}
+
 export class TfnswError extends Error {
   constructor(
     message: string,

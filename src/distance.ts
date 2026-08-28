@@ -86,6 +86,24 @@ export type TravelMode = "walk" | "drive" | "transit";
  */
 export type Precision = "building" | "street" | "area";
 
+/**
+ * The evidence that a measurement is not the mode it claims to be.
+ *
+ * Recorded rather than acted on: the answer still reports the minutes the
+ * router gave, and this sits beside them saying what they really describe. A
+ * caller that disagrees with the threshold can see exactly what it was.
+ */
+export interface MislabelledWalk {
+  /** What the route actually does. Only ferries are detectable this way. */
+  actually: "ferry";
+  /** The routed speed that gave it away — `km ÷ hours`, as measured. */
+  impliedKmh: number;
+  /** What it had to beat, so a later change of threshold stays visible. */
+  thresholdKmh: number;
+  /** Confirmed against the timetable: a ferry serves this pair. */
+  ferryAvailable: true;
+}
+
 export interface Travel {
   minutes: number;
   km: number;
@@ -97,6 +115,14 @@ export interface Travel {
    * legs, and on transit answered by Google, which does not report them.
    */
   journey?: Journey;
+  /**
+   * Present on a `walk` that crosses open water. Every router will put a
+   * pedestrian on a ferry and report the whole thing as walking — Google returns
+   * eight WALK steps for Balmain East to the CBD — and no field mask on any
+   * endpoint says otherwise, so it is caught by two signals instead. See
+   * `flagMislabelledWalks`.
+   */
+  mislabelled?: MislabelledWalk;
 }
 
 export interface TravelReport {
@@ -126,7 +152,10 @@ import {
   DEFAULT_WALK_SPEED_KMH,
   type Journey,
   TfnswError,
+  WALK_SUSPECT_KMH,
   fastestJourney,
+  ferryAvailable,
+  impliedSpeedKmh,
   journeyMinutes,
   tfnswKey,
   tripJourneys,
@@ -189,7 +218,21 @@ interface CachedGeo {
 }
 
 interface CacheShape {
-  routes: Record<string, { minutes: number; km: number; journey?: Journey }>;
+  routes: Record<
+    string,
+    {
+      minutes: number;
+      km: number;
+      journey?: Journey;
+      /**
+       * Whether a ferry serves this pair, once asked. Written only for walks
+       * fast enough to be suspect, so `undefined` means "never asked" rather
+       * than "no" — which is what lets entries written before this existed be
+       * re-examined instead of silently passing.
+       */
+      ferryServed?: boolean;
+    }
+  >;
   geo: Record<string, CachedGeo>;
 }
 
@@ -824,6 +867,126 @@ function providerFor(mode: TravelMode): string | undefined {
   return mode === "transit" && transitUsesTfnsw() ? TFNSW_PROVIDER : undefined;
 }
 
+/* ------------------------------------------------------ mislabelled walk -- */
+
+/**
+ * When to ask the timetable whether a ferry serves a pair.
+ *
+ * The question is "does a ferry run here at all", not "how long does it take",
+ * so the exact moment hardly matters — but it cannot be *any* moment. Probe at
+ * 3am and the planner answers, truthfully, that nothing is running. A caller's
+ * own `arriveBy` is used when there is one; otherwise the next weekday 9am in
+ * Sydney, which is what a commute question means.
+ *
+ * Found by inspection rather than by arithmetic because "+10 hours" is not a
+ * fixed thing across a daylight-saving boundary.
+ */
+function ferryProbeTime(arriveBy?: string, now: Date = new Date()): Date {
+  if (arriveBy) {
+    const given = new Date(arriveBy);
+    if (!Number.isNaN(given.getTime())) return given;
+  }
+  const sydney = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Sydney",
+    weekday: "short",
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  const at = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+  at.setUTCMinutes(0, 0, 0);
+  for (let step = 0; step < 24 * 9; step += 1) {
+    const parts = sydney.formatToParts(at);
+    const weekday = parts.find((p) => p.type === "weekday")?.value;
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    if (hour === "09" && weekday !== "Sat" && weekday !== "Sun") return at;
+    at.setUTCHours(at.getUTCHours() + 1);
+  }
+  return at;
+}
+
+/** One walk to examine, and where to write the finding if there is one. */
+interface WalkAudit {
+  /** The walk's far end — a listing. The trip is probed from here. */
+  from: Coord;
+  /** The end a search measures against — the office. */
+  to: Coord;
+  /** This leg's route-cache key, so one pair is probed once and not again. */
+  cacheKey: string;
+  minutes: number;
+  km: number;
+  /** Called only when both signals agree. */
+  flag: (evidence: MislabelledWalk) => void;
+}
+
+/**
+ * Mark the walks that are really ferry crossings.
+ *
+ * Asking any router to walk from Balmain East to the CBD returns a route made
+ * entirely of walking steps, across open water, and no field mask on any
+ * endpoint reports the vehicle — so the answer cannot be taken at face value
+ * and cannot be corrected from the numbers alone. A walk, a short ferry hop and
+ * a genuine stroll produce indistinguishable `(minutes, km)` pairs.
+ *
+ * So it takes two signals. The routed speed narrows the field for nothing, off
+ * numbers already in hand; only what survives that costs a request, which is
+ * why this is affordable to run on every walk — six of 285 in the measured set,
+ * and the other 279 are settled by arithmetic. The timetable then confirms it.
+ *
+ * Neither signal is sufficient alone: a router cutting a corner can look fast
+ * without crossing water, and a ferry existing nearby says nothing about the
+ * route that was returned. Both together were right on all six known cases and
+ * on neither control.
+ *
+ * Returns how many requests it actually spent.
+ */
+async function flagMislabelledWalks(audits: WalkAudit[], arriveBy?: string): Promise<number> {
+  const key = tfnswKey();
+  if (!key) return 0;
+
+  const suspects: { audit: WalkAudit; kmh: number }[] = [];
+  for (const audit of audits) {
+    const kmh = impliedSpeedKmh(audit.km, audit.minutes);
+    if (kmh !== null && kmh >= WALK_SUSPECT_KMH) suspects.push({ audit, kmh });
+  }
+  if (suspects.length === 0) return 0;
+
+  const c = loadCache();
+  const when = ferryProbeTime(arriveBy);
+  let probes = 0;
+
+  for (const { audit, kmh } of suspects) {
+    const cached = c.routes[audit.cacheKey];
+    let served = cached?.ferryServed;
+
+    if (served === undefined) {
+      if (probes > 0) await sleep(TFNSW_MIN_INTERVAL_MS);
+      try {
+        served = ferryAvailable(await tripJourneys(audit.from, audit.to, when, key));
+        probes += 1;
+      } catch (e) {
+        // A rejected key will not fix itself. Anything else is this one pair
+        // being unlucky, and a suspicion nobody confirmed is not a finding.
+        if (e instanceof TfnswError && e.fatal) throw e;
+        continue;
+      }
+      if (cached) {
+        cached.ferryServed = served;
+        cacheDirty = true;
+      }
+    }
+
+    if (served) {
+      audit.flag({
+        actually: "ferry",
+        impliedKmh: Math.round(kmh * 100) / 100,
+        thresholdKmh: WALK_SUSPECT_KMH,
+        ferryAvailable: true,
+      });
+    }
+  }
+  return probes;
+}
+
 /* ---------------------------------------------------------------- enrich -- */
 
 function chunk<T>(xs: T[], size: number): T[][] {
@@ -959,6 +1122,33 @@ export async function enrichWithTravel<T extends Locatable>(
       notes.push(`routing request failed: ${(e as Error).message}`);
     }
   }
+
+  // Only walks can be mislabelled this way, and only the fast ones cost a
+  // request. Runs before the flush so a probe is written down with its leg.
+  if (mode === "walk") {
+    const audits: WalkAudit[] = [];
+    for (const item of items) {
+      const travel = item.travel;
+      if (!travel || !item.coords) continue;
+      audits.push({
+        from: item.coords,
+        to: origin,
+        cacheKey: routeKey(mode, origin, item.coords, arriveBy, providerFor(mode)),
+        minutes: travel.minutes,
+        km: travel.km,
+        flag: (evidence) => {
+          travel.mislabelled = evidence;
+        },
+      });
+    }
+    try {
+      const probes = await flagMislabelledWalks(audits, arriveBy);
+      if (probes > 0) notes.push(`checked ${probes} suspiciously fast walk(s) against the timetable`);
+    } catch (e) {
+      // Never at the cost of the measurements themselves.
+      notes.push(`ferry check skipped: ${(e as Error).message}`);
+    }
+  }
   flushCache();
 
   for (const item of items) {
@@ -1012,6 +1202,8 @@ export interface PlaceLeg {
    * neither of which reports legs.
    */
   journey?: Journey;
+  /** Present on a `walk` that is really a ferry crossing — see `MislabelledWalk`. */
+  mislabelled?: MislabelledWalk;
 }
 
 export interface RoutePlacesReport {
@@ -1221,6 +1413,28 @@ export async function routePlaces(
       });
     });
     await sleep(CHUNK_DELAY_MS);
+  }
+
+  if (mode === "walk") {
+    const coordById = new Map(origins.map((place) => [place.id, place.coord]));
+    const audits: WalkAudit[] = [];
+    for (const leg of legs) {
+      const from = coordById.get(leg.id);
+      if (!from) continue;
+      audits.push({
+        from,
+        to: destination,
+        cacheKey: routeKey(mode, from, destination, arriveBy, providerFor(mode)),
+        minutes: leg.minutes,
+        km: leg.km,
+        flag: (evidence) => {
+          leg.mislabelled = evidence;
+        },
+      });
+    }
+    // A failed check leaves every measurement standing; it only leaves them
+    // unannotated, which is what they were before this existed.
+    await flagMislabelledWalks(audits, arriveBy).catch(() => 0);
   }
   flushCache();
 

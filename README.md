@@ -47,6 +47,8 @@ claude mcp add realestate -- node "E:/Personal Projects/RealEstateMCP/dist/index
 
 Address (with suburb/state/postcode), price display, bedrooms, bathrooms, car spaces, studies, land and building size, property type, agency (with average rating and review count), agents (name, job title, profile URL), inspection times and auction dates as ISO 8601 with offset, description, photo and floorplan URLs.
 
+On a `walk`, a route that is really a ferry crossing carries `mislabelled` — the implied speed that gave it away, the threshold it beat, and confirmation from the timetable that a ferry serves that address. The minutes are left exactly as the router returned them; the flag is the interpretation, kept separate so you can disagree with it. Needs `TFNSW_API_KEY`, and is skipped without one. On `transit` answered by TfNSW, each leg's `journey` reports what the trip is actually made of. See `CLAUDE.md` for both.
+
 Results include listings REA blends in from neighbouring suburbs; those are flagged `isSurrounding: true`. They can be across water from the suburb you searched, so filter on each listing's own suburb for anything geographic.
 
 ### Photos and token cost

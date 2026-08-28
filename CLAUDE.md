@@ -157,11 +157,16 @@ CBD walk times read a few minutes optimistic — treat as ±3 min.
 
 ### Transit
 
-**`travelMode: "transit"` is Google-only and always routes through Google**,
-whatever `REALESTATE_MCP_ROUTER` says — no free router does public transport, and
-approximating a train time from road distance would be the exact fake precision
-this module exists to remove. Asking Valhalla for it throws rather than quietly
-returning a walking time.
+**`travelMode: "transit"` never consults `REALESTATE_MCP_ROUTER`.** It goes to
+TfNSW's Trip Planner when `TFNSW_API_KEY` is set and to Google otherwise — no
+free router does public transport, and approximating a train time from road
+distance would be the exact fake precision this module exists to remove. Asking
+Valhalla for it throws rather than quietly returning a walking time.
+
+Prefer TfNSW. It answers in **legs**, each carrying a product class, so what a
+journey is made of is measured rather than echoed back from what was asked for;
+Google returns a duration and nothing else at any field mask. `routerFor` reports
+which one answered, so a transit group reading `google` means the key is absent.
 
 **It requires `travelArriveBy`**, an RFC 3339 timestamp. A transit time is a
 timetable lookup, so the same pair of points is a different number on a Tuesday
@@ -180,6 +185,37 @@ an outage: absorbed, it would hand back every listing with `travel: null`, which
 return the entire unfiltered set as though everything matched. `assertRoutable`
 runs up front and throws for exactly this reason — do not move those checks back
 inside the try.
+
+### A walk the router put on a ferry
+
+Every router will walk a pedestrian onto a ferry and report the whole thing as
+walking. Google returns eight `WALK` steps for Balmain East to the CBD, a journey
+across open water, and no field mask on any endpoint names the vehicle. The
+numbers cannot correct it either — a stroll, a short ferry hop and a genuine walk
+produce indistinguishable `(minutes, km)` pairs, which is why a single threshold
+was tried and rejected.
+
+`flagMislabelledWalks` uses two signals, and neither is sufficient alone:
+
+1. **Implied speed** — `km ÷ hours`, off an answer already in hand. Across 285
+   walks measured into one Sydney office, the 279 genuine ones sit between 4.053
+   and 4.625 km/h and six sit between 5.08 and 6.53, with **nothing** in the 0.44
+   km/h between. `WALK_SUSPECT_KMH` is 4.85, the middle of that empty band.
+2. **A ferry actually serves the pair** — across *every* journey the Trip Planner
+   offers, not just the fastest. Three of the six have a bus as their quickest
+   way in, so the chosen journey's own `hasFerry` misses them.
+
+Only what fails the first test costs a request, which is what makes this
+affordable on every walk: six of 285 asked, the other 279 settled by arithmetic.
+A confirmed case gets `mislabelled` beside its minutes. **The measurement is
+never rewritten** — the minutes are what the router really returned, and the
+correction is an interpretation of them that a caller is entitled to reject.
+
+Needs `TFNSW_API_KEY`. Without it the check is skipped rather than half-run:
+speed alone is a suspicion, not a finding. The probe is cached on the route entry
+as `ferryServed`, so one pair is asked once; `undefined` there means *never
+asked* rather than *no*, which is what lets entries written before this existed
+be re-examined instead of quietly passing.
 
 ### Google's caching limit is a licence term, not a tuning knob
 
