@@ -109,6 +109,59 @@ belong in `.env`; it is gitignored.
 | `ORS_API_KEY` | — | Only read when `REALESTATE_MCP_ROUTER=ors` |
 | `REALESTATE_MCP_IDLE` | `30000` | Idle ms before the browser closes and releases the profile lock |
 
+## Photo hosting
+
+Listing photos are **not in git**. `build:run` publishes them to a Cloudflare R2 bucket and
+mirrors them into the findings repo's `public/images/listings/` (gitignored there) so
+`validate:data` can check them and so a re-upload never means re-downloading from REA.
+
+The findings repo's PLAN.md §2 originally committed photos to the repo, with §11 holding an
+escape hatch open — every image path in JSON is site-relative and every render goes through the
+site's `src/lib/images.ts`, so moving the files costs one env var and zero JSON changes. That
+hatch was taken *before* the first real run rather than after, because photos entering git
+history is the one part that would have been expensive to undo. R2 rather than the alternatives
+because **egress is free**, and the site's whole job is serving the same photos to phones over
+and over.
+
+### One-time setup
+
+1. **Bucket** — Cloudflare dashboard → R2 → *Create bucket*, e.g. `sydney-rental-findings`.
+   Location Automatic (or APAC).
+2. **Public access** — one of:
+   - *Public Development URL* (bucket → Settings): free, instant, gives
+     `https://pub-<hash>.r2.dev`. Cloudflare rate-limits it and labels it development-only —
+     fine for a handful of viewers.
+   - *Custom domain*: needs a domain on Cloudflare. Proper CDN caching, no rate limit. Better if
+     you have one.
+3. **API token** — R2 → *Manage API tokens* → *Create API token*, permission **Object Read &
+   Write**, scoped to that bucket. Copy the Access Key ID and Secret Access Key; the secret is
+   shown once.
+4. **Account ID** — on the R2 overview page.
+5. **`.env`** at this package's root (gitignored, never reaches Vercel) — copy `.env.example`
+   and fill:
+
+   ```
+   R2_ACCOUNT_ID=…
+   R2_ACCESS_KEY_ID=…
+   R2_SECRET_ACCESS_KEY=…
+   R2_BUCKET=sydney-rental-findings
+   R2_PUBLIC_BASE_URL=https://pub-<hash>.r2.dev
+   ```
+
+6. **Verify** — `npm run check:r2`. It uploads a real WebP, reads it back over the *public* URL
+   the way a phone would, and cleans up. The public read is the part worth having: a token can
+   write perfectly while public access is still off, and you would not find out until photos 404
+   on the live site.
+7. **Site env** — set `NEXT_PUBLIC_IMAGE_BASE_URL` in the findings repo (`.env.local`, and its
+   Vercel project) to the same public base URL.
+
+No CORS configuration is needed: photos are rendered with plain `<img>` tags, not fetched.
+
+`build-run.ts` refuses to run without R2 configured, rather than writing image paths that would
+resolve to nothing (`--local-images` skips uploading, for local testing only). A photo is only
+recorded once it has uploaded *and* been mirrored — upload happens first, so a failed upload
+leaves nothing behind for a later run to mistake for a real file.
+
 ## Development
 
 The server runs compiled JS, and Claude Code spawns it as a child process — so edits to `src/` do nothing until that process is replaced.

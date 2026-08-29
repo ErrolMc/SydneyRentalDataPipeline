@@ -657,3 +657,6 @@ need Errol's word are marked **(Errol)**.
   `finally` and calls `closeBrowser()`. Two comments still mention `McpClient`'s timeout
   (`build-envelope.ts:170`, `enrich-transit.ts:70`) — they explain the batching that
   Phase 2 removes, left as-is.
+- Step 4: findings' local `.env.pipeline` deleted (it held only `R2_BUCKET`). The
+  findings-side text changes this step lists (README pointer, `.env.example:19`) are
+  batched into the Step 5 findings commit so each repo still gets one commit per step.

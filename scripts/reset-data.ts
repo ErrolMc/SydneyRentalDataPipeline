@@ -80,7 +80,7 @@ async function main() {
   const { config: r2, missing } = r2ConfigFromEnv()
   if (!r2) {
     fail(
-      `R2 is not configured — missing ${missing.join(', ')} in .env.pipeline.\n` +
+      `R2 is not configured — missing ${missing.join(', ')} in the pipeline's .env.\n` +
         '  Refusing to reset: clearing the local side while the bucket keeps its objects\n' +
         '  leaves the next run downloading photos that are already there under keys\n' +
         '  nothing tracks any more.',

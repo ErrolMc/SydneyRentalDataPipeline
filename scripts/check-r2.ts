@@ -41,7 +41,7 @@ async function main() {
   const { config, missing } = r2ConfigFromEnv()
 
   if (!config) {
-    console.error(`\n✖ .env.pipeline is missing: ${missing.join(', ')}\n`)
+    console.error(`\n✖ the pipeline's .env is missing: ${missing.join(', ')}\n`)
     console.error('  See README, "Photo hosting" — one-time setup.\n')
     process.exit(1)
   }

@@ -3,12 +3,9 @@
 // else from src/. See src/env.ts.
 import '../../src/env.js'
 
-import path from 'node:path'
 import process from 'node:process'
 
 import { AwsClient } from 'aws4fetch'
-
-import { FINDINGS_DIR } from './json-io'
 
 /**
  * Cloudflare R2 — where listing photos are served from.
@@ -24,8 +21,9 @@ import { FINDINGS_DIR } from './json-io'
  * phones, over and over, by a handful of people, and every other object store
  * bills for exactly that.
  *
- * Credentials live in `.env.pipeline` (gitignored) and never reach Vercel — the
- * site only ever needs the public base URL.
+ * Credentials live in this package's `.env` (gitignored — see `.env.example` and
+ * README, "Photo hosting") and never reach Vercel: the site only ever needs the
+ * public base URL.
  */
 
 export interface R2Config {
@@ -35,19 +33,6 @@ export interface R2Config {
   bucket: string
   /** Public base for reads, e.g. `https://pub-….r2.dev`. Mirrors NEXT_PUBLIC_IMAGE_BASE_URL. */
   publicBaseUrl: string
-}
-
-let envLoaded = false
-
-/** `.env.pipeline` holds the pipeline's secrets. Absent is fine — the caller decides. */
-function loadPipelineEnv(): void {
-  if (envLoaded) return
-  envLoaded = true
-  try {
-    process.loadEnvFile(path.join(FINDINGS_DIR, '.env.pipeline'))
-  } catch {
-    // No file, or unreadable. Configuration is reported by `r2ConfigFromEnv`.
-  }
 }
 
 const REQUIRED = [
@@ -60,8 +45,6 @@ const REQUIRED = [
 
 /** Returns null when R2 is not configured, plus which variables are missing. */
 export function r2ConfigFromEnv(): { config: R2Config | null; missing: string[] } {
-  loadPipelineEnv()
-
   const missing = REQUIRED.filter((name) => !process.env[name]?.trim())
   if (missing.length > 0) return { config: null, missing }
 

@@ -394,7 +394,7 @@ async function checkRemotePhotos(): Promise<void> {
 
   const { config, missing } = r2ConfigFromEnv()
   if (!config) {
-    fail(`--check-remote needs R2 credentials — missing ${missing.join(', ')} in .env.pipeline`)
+    fail(`--check-remote needs R2 credentials — missing ${missing.join(', ')} in the pipeline's .env`)
     return
   }
 

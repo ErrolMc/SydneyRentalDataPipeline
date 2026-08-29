@@ -131,7 +131,7 @@ async function main() {
   if (!r2 && !LOCAL_IMAGES && !DRY_RUN) {
     fail(
       [
-        `R2 is not configured — missing ${missing.join(', ')} in .env.pipeline.`,
+        `R2 is not configured — missing ${missing.join(', ')} in the pipeline's .env.`,
         '  Photos are served from R2 (see README, "Photo hosting"), so a run without it',
         '  would record image paths that resolve to nothing. Pass --local-images to',
         '  skip uploading for a local test.',
