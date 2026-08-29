@@ -13,20 +13,42 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc -p tsconfig.scripts.json",
     "setup": "node dist/cli.js setup",
     "start": "node dist/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "validate:data": "tsx scripts/validate-data.ts",
+    "capture:run": "tsx scripts/capture-run.ts",
+    "build:run": "tsx scripts/build-run.ts",
+    "replay:run": "tsx scripts/replay-run.ts",
+    "build:envelope": "tsx scripts/build-envelope.ts",
+    "enrich:walk": "tsx scripts/enrich-walkability.ts",
+    "enrich:travel": "tsx scripts/enrich-travel.ts",
+    "enrich:transit": "tsx scripts/enrich-transit.ts",
+    "check:scoring": "tsx scripts/check-scoring.ts",
+    "check:walk": "tsx scripts/check-walkability.ts",
+    "check:ledger": "tsx scripts/check-ledger.ts",
+    "check:searches": "tsx scripts/check-searches.ts",
+    "audit:capture": "tsx scripts/audit-capture.ts",
+    "audit:postcodes": "tsx scripts/audit-postcodes.ts",
+    "check:shares": "tsx scripts/check-shares.ts",
+    "check:transit": "tsx scripts/check-transit.ts",
+    "check:r2": "tsx scripts/check-r2.ts",
+    "reset:data": "tsx scripts/reset-data.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",
+    "aws4fetch": "^1.0.20",
     "patchright": "^1.52.5",
-    "zod": "^3.25.0"
+    "sharp": "^0.35.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
   }
 }

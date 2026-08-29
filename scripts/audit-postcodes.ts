@@ -1,0 +1,58 @@
+import process from 'node:process'
+
+import { CriteriaSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { dataPath, readJsonFile } from './lib/json-io'
+import { McpClient } from './lib/mcp-client'
+
+/**
+ * Which REA suburbs sit in the envelope's postcodes, and which of them the
+ * envelope never asks about.
+ *
+ *   npm run audit:postcodes
+ *
+ * `criteria.search.locations` is a hand-written list, and a suburb missing from
+ * it fails **silently** — an unasked suburb looks exactly like a suburb with no
+ * listings. Barangaroo was missing this way. `resolve_location` enumerates a
+ * postcode without a browser, so the gap is cheap to measure rather than guess.
+ */
+
+const criteria = await readJsonFile(dataPath('config', 'criteria.json'), CriteriaSchema)
+
+const configured = new Set(criteria.search.locations.map((l) => l.toLowerCase()))
+const postcodes = [
+  ...new Set(criteria.search.locations.map((l) => l.match(/(\d{4})\s*$/)?.[1]).filter(Boolean)),
+].sort() as string[]
+
+const client = new McpClient()
+await client.handshake()
+
+let missingTotal = 0
+try {
+  for (const postcode of postcodes) {
+    const found = (await client.callToolArray('resolve_location', { query: postcode, max: 20 })) as Array<{
+      text: string
+      type: string
+      name?: string
+      state?: string
+      postcode?: string
+    }>
+
+    const suburbs = found.filter((f) => f.type === 'suburb' || f.type === 'precinct')
+    const rows = suburbs.map((s) => {
+      const canonical = `${s.name} ${s.state} ${s.postcode}`
+      return { canonical, type: s.type, known: configured.has(canonical.toLowerCase()) }
+    })
+    const missing = rows.filter((r) => !r.known)
+    missingTotal += missing.length
+
+    console.log(
+      `${postcode}  ${String(rows.length).padStart(2)} suburb(s), ` +
+        `${rows.length - missing.length} in envelope` +
+        (missing.length ? `  MISSING: ${missing.map((m) => `${m.canonical}${m.type === 'precinct' ? ' (precinct)' : ''}`).join(', ')}` : ''),
+    )
+  }
+} finally {
+  client.close()
+}
+
+console.log(`\n${missingTotal} suburb(s) in the envelope's own postcodes are never queried.`)

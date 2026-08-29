@@ -1,0 +1,24 @@
+{
+  // Type-checks `scripts/` (the pipeline moved in from the findings repo) together
+  // with `src/` and, through the scripts' imports, the findings site's `src/lib/**`.
+  //
+  // A second config rather than a wider `include` in tsconfig.json: that one has
+  // `rootDir: src` and Node16 resolution, and the scripts use extensionless
+  // relative imports and reach across the repo boundary — both of which the main
+  // config rejects, and `prepare` runs it on every `npm install`. This one never
+  // emits. `npm run typecheck` is the way in.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM"],
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts"]
+}
