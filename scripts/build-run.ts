@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import path from 'node:path'
 import process from 'node:process'
 
@@ -26,7 +29,6 @@ import { geocodeSuburbs, type Centroid } from './lib/geocode-places'
 import { syncListingImages } from './lib/images'
 import { dataPath, isoNow, readJsonFile, sortRecord, writeJsonFile } from './lib/json-io'
 import { markAbsent, mergeListing, mergeRejected } from './lib/ledger'
-import { McpClient } from './lib/mcp-client'
 import { r2ConfigFromEnv } from './lib/r2'
 import { suburbKey, type RawListing } from './lib/raw'
 import {
@@ -311,21 +313,13 @@ async function main() {
 
   const unplaceableSuburbs: string[] = []
 
-  // Ask the server once for everything that needs placing, before the loop.
-  // Each client spawns a server process, and asking inside the loop would spawn
-  // one per new suburb — of which a run brings a handful at most.
+  // Ask once for everything that needs placing, before the loop — a run brings
+  // a handful of new suburbs at most.
   const needPlacing = [...bySuburb]
     .filter(([key, listings]) => !nextSuburbs[key] && !centroidOf(listings))
     .map(([key, listings]) => ({ id: key, suburb: listings[0].suburb, postcode: listings[0].postcode }))
   let geocoded = new Map<string, Centroid>()
-  if (needPlacing.length > 0) {
-    const client = new McpClient()
-    try {
-      geocoded = await geocodeSuburbs(client, needPlacing)
-    } finally {
-      client.close()
-    }
-  }
+  if (needPlacing.length > 0) geocoded = await geocodeSuburbs(needPlacing)
 
   for (const [key, listings] of bySuburb) {
     if (nextSuburbs[key]) continue

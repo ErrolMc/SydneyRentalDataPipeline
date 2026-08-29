@@ -641,4 +641,19 @@ need Errol's word are marked **(Errol)**.
   cross-repo schema files without any zod `paths` trick — TypeScript 7 treats the two
   identical copies as compatible. `sharp`/`aws4fetch` went into `dependencies`, not
   `devDependencies`: this package runs them.
-- Step 2: the acceptance test already passes here — replay never used the MCP hop.
+- Step 2 (`24d613f`): the acceptance test already passes here — replay never used the
+  MCP hop.
+- **TypeScript 7 broke `npm run build` at Step 1 and nothing said so** (`58866d1` fixes
+  it): tsgo does not auto-include `node_modules/@types` under the Node16 config, so
+  every bare `process` / `node:` import failed with TS2591; `prepare` had run on the
+  install that *introduced* TS 7 and passed, apparently against 5.9 still on disk. Fix:
+  `"types": ["node"]` in both tsconfigs. Lesson recorded for Step 6: run `npm run build`
+  by hand after every dependency change; do not trust `prepare`.
+- Step 3: acceptance test passed again (same two hashes) after the stdio hop was
+  replaced; `check:r2` now reports "not configured" from this repo's `.env` path, which
+  is the expected message until Errol fills the R2 keys. `try { … } finally
+  { client.close() }` wrappers were unwrapped in `build-envelope`, `enrich-travel`,
+  `enrich-transit`, `audit-postcodes` (nothing left to close); `capture-run` keeps its
+  `finally` and calls `closeBrowser()`. Two comments still mention `McpClient`'s timeout
+  (`build-envelope.ts:170`, `enrich-transit.ts:70`) — they explain the batching that
+  Phase 2 removes, left as-is.

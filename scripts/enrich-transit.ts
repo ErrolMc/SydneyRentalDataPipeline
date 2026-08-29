@@ -1,8 +1,11 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import process from 'node:process'
 
 import { LedgerSchema, SiteConfigSchema, travelKey, OFFICE_ORIGIN_ID } from '../../SydneyRealEstateFindings/src/lib/schema'
 import { dataPath, readJsonFile, writeJsonFile, isoNow } from './lib/json-io'
-import { McpClient } from './lib/mcp-client'
+import { callRoutePlaces } from './lib/tools'
 import {
   RoutePlacesReportSchema,
   describeComposition,
@@ -123,76 +126,71 @@ const tally = {
 }
 const routers = new Set<string>()
 
-const client = new McpClient()
 console.log()
-try {
-  for (let start = 0; start < todo.length; start += BATCH) {
-    const batch = todo.slice(start, start + BATCH)
-    let report: RoutePlacesReport
-    try {
-      report = RoutePlacesReportSchema.parse(
-        await client.callTool('route_places', {
-          places: batch.map(([id, entry]) => ({ id, lat: entry.lat!, lng: entry.lon! })),
-          destination: site.office.address,
-          travelMode: 'transit',
-          travelArriveBy: arriveBy,
-        }),
-      )
-    } catch (error) {
-      fail(
-        `route_places failed on listings ${start + 1}–${start + batch.length}: ` +
-          `${(error as Error).message}\n  Nothing was written; re-run to resume from the same place.`,
-      )
-    }
-
-    routers.add(report.router)
-    tally.unroutable.push(...report.unroutable)
-
-    for (const leg of report.legs) {
-      const entry = ledger.listings[leg.id]
-      if (!entry) continue
-
-      if (!leg.journey) {
-        // A duration with no legs — the server answered from Google, which does
-        // not report them. Recorded as a gap rather than written as a journey.
-        tally.noJourney.push(entry.address)
-        continue
-      }
-      const composition = toComposition(leg.journey)
-      if (!composition) {
-        tally.staleCache.push(entry.address)
-        continue
-      }
-
-      const previous = entry.travel[cacheKey]
-      entry.travel[cacheKey] = {
-        minutes: Math.round(leg.minutes * 10) / 10,
-        km: Math.round(leg.km * 100) / 100,
-        mode: 'transit',
-        // The coordinates are unchanged, so how well the address resolved is too.
-        precision: previous?.precision ?? 'building',
-        composition,
-        computed_at: isoNow(),
-        address: entry.address,
-      }
-
-      tally.measured += 1
-      if (composition.is_walk) tally.walkOnly += 1
-      if (composition.has_ferry) tally.ferry += 1
-      if (composition.interchanges > 0) tally.withInterchange += 1
-
-      const minutes = Math.round(leg.minutes * 10) / 10
-      const was = previous ? `${previous.minutes.toFixed(1)} →` : '   —  '
-      const moved = previous ? minutes - previous.minutes : null
-      console.log(
-        `  ${String(tally.measured).padStart(3)}. ${was}${minutes.toFixed(1).padStart(6)} min` +
-          `${moved === null ? '      ' : (moved > 0 ? ' +' : ' ') + moved.toFixed(1).padStart(5)}` +
-          `  ${describeComposition(composition).slice(0, 34).padEnd(34)} ${entry.address.slice(0, 40)}`,
-      )
-    }
+for (let start = 0; start < todo.length; start += BATCH) {
+  const batch = todo.slice(start, start + BATCH)
+  let report: RoutePlacesReport
+  try {
+    report = RoutePlacesReportSchema.parse(
+      await callRoutePlaces({
+        places: batch.map(([id, entry]) => ({ id, lat: entry.lat!, lng: entry.lon! })),
+        destination: site.office.address,
+        travelMode: 'transit',
+        travelArriveBy: arriveBy,
+      }),
+    )
+  } catch (error) {
+    fail(
+      `route_places failed on listings ${start + 1}–${start + batch.length}: ` +
+        `${(error as Error).message}\n  Nothing was written; re-run to resume from the same place.`,
+    )
   }
-} finally {
-  client.close()
+
+  routers.add(report.router)
+  tally.unroutable.push(...report.unroutable)
+
+  for (const leg of report.legs) {
+    const entry = ledger.listings[leg.id]
+    if (!entry) continue
+
+    if (!leg.journey) {
+      // A duration with no legs — the server answered from Google, which does
+      // not report them. Recorded as a gap rather than written as a journey.
+      tally.noJourney.push(entry.address)
+      continue
+    }
+    const composition = toComposition(leg.journey)
+    if (!composition) {
+      tally.staleCache.push(entry.address)
+      continue
+    }
+
+    const previous = entry.travel[cacheKey]
+    entry.travel[cacheKey] = {
+      minutes: Math.round(leg.minutes * 10) / 10,
+      km: Math.round(leg.km * 100) / 100,
+      mode: 'transit',
+      // The coordinates are unchanged, so how well the address resolved is too.
+      precision: previous?.precision ?? 'building',
+      composition,
+      computed_at: isoNow(),
+      address: entry.address,
+    }
+
+    tally.measured += 1
+    if (composition.is_walk) tally.walkOnly += 1
+    if (composition.has_ferry) tally.ferry += 1
+    if (composition.interchanges > 0) tally.withInterchange += 1
+
+    const minutes = Math.round(leg.minutes * 10) / 10
+    const was = previous ? `${previous.minutes.toFixed(1)} →` : '   —  '
+    const moved = previous ? minutes - previous.minutes : null
+    console.log(
+      `  ${String(tally.measured).padStart(3)}. ${was}${minutes.toFixed(1).padStart(6)} min` +
+        `${moved === null ? '      ' : (moved > 0 ? ' +' : ' ') + moved.toFixed(1).padStart(5)}` +
+        `  ${describeComposition(composition).slice(0, 34).padEnd(34)} ${entry.address.slice(0, 40)}`,
+    )
+  }
 }
 
 console.log(`\n  router   ${[...routers].join(', ') || 'none'}`)

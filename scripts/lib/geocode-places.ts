@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { McpClient } from './mcp-client'
+import { callGeocodePlaces } from './tools'
 
 /**
  * The `geocode_places` boundary: asking the MCP server where a suburb is.
@@ -57,19 +57,15 @@ export interface SuburbQuery {
  * Centroids for many suburbs, by the caller's id. A missing id could not be
  * placed — which the caller must treat as "unknown", never as a position.
  *
- * Takes an open client rather than making one, because both callers need to
- * decide their own batching: `build-envelope` chunks so it can checkpoint and
- * resume, and spawning a server per suburb would be absurd.
+ * Callers decide their own batching: `build-envelope` chunks so it can
+ * checkpoint and resume.
  */
-export async function geocodeSuburbs(
-  client: McpClient,
-  places: readonly SuburbQuery[],
-): Promise<Map<string, Centroid>> {
+export async function geocodeSuburbs(places: readonly SuburbQuery[]): Promise<Map<string, Centroid>> {
   const placed = new Map<string, Centroid>()
   if (places.length === 0) return placed
 
   const report = GeocodeReportSchema.parse(
-    await client.callTool('geocode_places', {
+    await callGeocodePlaces({
       queries: places.map((p) => localityQuery(p.suburb, p.postcode, p.state)),
       prefer: 'locality',
     }),

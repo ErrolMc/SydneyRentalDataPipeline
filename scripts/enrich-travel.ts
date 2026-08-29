@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import process from 'node:process'
 
 import {
@@ -10,7 +13,7 @@ import {
   type TravelPrecision,
 } from '../../SydneyRealEstateFindings/src/lib/schema'
 import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
-import { McpClient } from './lib/mcp-client'
+import { callRoutePlaces } from './lib/tools'
 import { RoutePlacesReportSchema, toMislabelled } from './lib/route-places'
 
 /**
@@ -143,22 +146,17 @@ async function main() {
     return
   }
 
-  const client = new McpClient()
   let report
-  try {
-    // Parsed, not cast. An inline `as` here is what let the server's measured
-    // journey arrive and be dropped for as long as nobody looked — see
-    // `lib/route-places.ts`.
-    report = RoutePlacesReportSchema.parse(
-      await client.callTool('route_places', {
-        places: todo.map(([id, entry]) => ({ id, lat: entry.lat!, lng: entry.lon! })),
-        destination: origin.address,
-        travelMode: MODE,
-      }),
-    )
-  } finally {
-    client.close()
-  }
+  // Parsed, not cast. An inline `as` here is what let the server's measured
+  // journey arrive and be dropped for as long as nobody looked — see
+  // `lib/route-places.ts`.
+  report = RoutePlacesReportSchema.parse(
+    await callRoutePlaces({
+      places: todo.map(([id, entry]) => ({ id, lat: entry.lat!, lng: entry.lon! })),
+      destination: origin.address,
+      travelMode: MODE,
+    }),
+  )
 
   // Same stamp shape the walkability enricher writes, so the two caches read alike.
   const computedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')

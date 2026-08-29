@@ -1,8 +1,11 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import process from 'node:process'
 
 import { CriteriaSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
 import { dataPath, readJsonFile } from './lib/json-io'
-import { McpClient } from './lib/mcp-client'
+import { callResolveLocation } from './lib/tools'
 
 /**
  * Which REA suburbs sit in the envelope's postcodes, and which of them the
@@ -23,36 +26,29 @@ const postcodes = [
   ...new Set(criteria.search.locations.map((l) => l.match(/(\d{4})\s*$/)?.[1]).filter(Boolean)),
 ].sort() as string[]
 
-const client = new McpClient()
-await client.handshake()
-
 let missingTotal = 0
-try {
-  for (const postcode of postcodes) {
-    const found = (await client.callToolArray('resolve_location', { query: postcode, max: 20 })) as Array<{
-      text: string
-      type: string
-      name?: string
-      state?: string
-      postcode?: string
-    }>
+for (const postcode of postcodes) {
+  const found = (await callResolveLocation({ query: postcode, max: 20 })) as Array<{
+    text: string
+    type: string
+    name?: string
+    state?: string
+    postcode?: string
+  }>
 
-    const suburbs = found.filter((f) => f.type === 'suburb' || f.type === 'precinct')
-    const rows = suburbs.map((s) => {
-      const canonical = `${s.name} ${s.state} ${s.postcode}`
-      return { canonical, type: s.type, known: configured.has(canonical.toLowerCase()) }
-    })
-    const missing = rows.filter((r) => !r.known)
-    missingTotal += missing.length
+  const suburbs = found.filter((f) => f.type === 'suburb' || f.type === 'precinct')
+  const rows = suburbs.map((s) => {
+    const canonical = `${s.name} ${s.state} ${s.postcode}`
+    return { canonical, type: s.type, known: configured.has(canonical.toLowerCase()) }
+  })
+  const missing = rows.filter((r) => !r.known)
+  missingTotal += missing.length
 
-    console.log(
-      `${postcode}  ${String(rows.length).padStart(2)} suburb(s), ` +
-        `${rows.length - missing.length} in envelope` +
-        (missing.length ? `  MISSING: ${missing.map((m) => `${m.canonical}${m.type === 'precinct' ? ' (precinct)' : ''}`).join(', ')}` : ''),
-    )
-  }
-} finally {
-  client.close()
+  console.log(
+    `${postcode}  ${String(rows.length).padStart(2)} suburb(s), ` +
+      `${rows.length - missing.length} in envelope` +
+      (missing.length ? `  MISSING: ${missing.map((m) => `${m.canonical}${m.type === 'precinct' ? ' (precinct)' : ''}`).join(', ')}` : ''),
+  )
 }
 
 console.log(`\n${missingTotal} suburb(s) in the envelope's own postcodes are never queried.`)

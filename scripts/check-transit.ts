@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import process from 'node:process'
 
 import { IndexSchema, PRODUCT_CLASS, RunSchema, travelKey, OFFICE_ORIGIN_ID } from '../../SydneyRealEstateFindings/src/lib/schema'

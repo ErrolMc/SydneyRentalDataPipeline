@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import { writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
@@ -8,7 +11,7 @@ import {
   placesByCanonical,
 } from '../../SydneyRealEstateFindings/src/lib/schema'
 import { dataPath, readJsonFile } from './lib/json-io'
-import { McpClient } from './lib/mcp-client'
+import { callSearchListings, closeBrowser } from './lib/tools'
 import { planSearchQueries, type SearchQueryGroup } from './lib/searches'
 
 /**
@@ -152,7 +155,6 @@ const isBlocked = (error: unknown) =>
   /bot protection|kasada|blocked by realestate/i.test(String((error as Error)?.message ?? ''))
 
 async function fetchLocation(
-  client: McpClient,
   group: SearchQueryGroup,
   location: string,
   maxPages: number,
@@ -183,12 +185,12 @@ async function fetchLocation(
 
     let payload: Record<string, unknown>
     try {
-      payload = await client.callTool('search_listings', args)
+      payload = await callSearchListings(args)
     } catch (error) {
       if (!isBlocked(error)) throw error
       console.log(`      bot block on page ${page}; backing off ${BLOCK_BACKOFF_MS / 1000}s`)
       await sleep(BLOCK_BACKOFF_MS)
-      payload = await client.callTool('search_listings', args)
+      payload = await callSearchListings(args)
     }
 
     pagesFetched += 1
@@ -274,9 +276,6 @@ console.log(`\ncapture → ${out}`)
 console.log(`groups: ${plan.groups.map((g) => `${g.key} ≤${g.maxTravelMinutes}min`).join(', ')}`)
 console.log(`core (paged to exhaustion): ${core.size} · probe pages elsewhere: ${probePages}\n`)
 
-const client = new McpClient()
-await client.handshake()
-
 const capturedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
 const groups: unknown[] = []
 const searchedLocations = new Set<string>()
@@ -295,7 +294,7 @@ try {
       const maxPages = exhaustive ? PAGE_CAP : probePages
       let outcome: PageOutcome
       try {
-        outcome = await fetchLocation(client, group, location, maxPages, criteria.search, accumulator)
+        outcome = await fetchLocation(group, location, maxPages, criteria.search, accumulator)
       } catch (error) {
         // One bad location must not cost the whole pass; it is simply not
         // recorded as searched, which is what `partial_coverage` is for.
@@ -355,7 +354,7 @@ try {
     })
   }
 } finally {
-  client.close()
+  await closeBrowser()
 }
 
 const capture = {

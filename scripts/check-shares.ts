@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import { readFileSync } from 'node:fs'
 import process from 'node:process'
 

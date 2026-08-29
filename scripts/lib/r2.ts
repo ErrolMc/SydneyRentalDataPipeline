@@ -1,3 +1,8 @@
+// `.env` is read lazily here, so order does not matter — but the loader must
+// run in every process that reaches R2, including scripts that import nothing
+// else from src/. See src/env.ts.
+import '../../src/env.js'
+
 import path from 'node:path'
 import process from 'node:process'
 

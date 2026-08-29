@@ -1,10 +1,13 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import { readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
 import { SearchesSchema, SiteConfigSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
 import { geocodeSuburbs } from './lib/geocode-places'
 import { dataPath, readJsonFile } from './lib/json-io'
-import { McpClient } from './lib/mcp-client'
+import { callResolveLocation, callRoutePlaces } from './lib/tools'
 import { resolveTransitDeparture } from './lib/sydney'
 
 /**
@@ -108,49 +111,42 @@ if (stage === 'enumerate') {
   // resolve_location caps at 20; a postcode returning exactly 20 may be cut off.
   const MAX = 20
 
-  const client = new McpClient()
-  await client.handshake()
-
   const bySuburb = new Map<string, CachedSuburb>()
   for (const existing of cache.suburbs) bySuburb.set(existing.canonical, existing)
   const truncated: string[] = []
 
-  try {
-    for (let code = from; code <= to; code += 1) {
-      const postcode = String(code)
-      let found: Array<{ type: string; name?: string; state?: string; postcode?: string }>
-      try {
-        found = (await client.callToolArray('resolve_location', {
-          query: postcode,
-          max: MAX,
-        })) as typeof found
-      } catch (error) {
-        console.log(`${postcode}  FAILED — ${(error as Error).message.slice(0, 90)}`)
-        continue
-      }
-
-      // Keep only real places in the postcode asked for: a bare numeric query
-      // also matches suburbs whose *name* contains the digits.
-      const places = found.filter(
-        (f) => (f.type === 'suburb' || f.type === 'precinct') && f.postcode === postcode && f.name,
-      )
-      if (places.length >= MAX) truncated.push(postcode)
-
-      for (const place of places) {
-        const canonical = `${place.name} ${place.state} ${place.postcode}`
-        if (bySuburb.has(canonical)) continue
-        bySuburb.set(canonical, {
-          canonical,
-          name: place.name as string,
-          state: place.state as string,
-          postcode: place.postcode as string,
-          type: place.type,
-        })
-      }
-      if (places.length > 0) console.log(`${postcode}  ${places.length} place(s)`)
+  for (let code = from; code <= to; code += 1) {
+    const postcode = String(code)
+    let found: Array<{ type: string; name?: string; state?: string; postcode?: string }>
+    try {
+      found = (await callResolveLocation({
+        query: postcode,
+        max: MAX,
+      })) as typeof found
+    } catch (error) {
+      console.log(`${postcode}  FAILED — ${(error as Error).message.slice(0, 90)}`)
+      continue
     }
-  } finally {
-    client.close()
+
+    // Keep only real places in the postcode asked for: a bare numeric query
+    // also matches suburbs whose *name* contains the digits.
+    const places = found.filter(
+      (f) => (f.type === 'suburb' || f.type === 'precinct') && f.postcode === postcode && f.name,
+    )
+    if (places.length >= MAX) truncated.push(postcode)
+
+    for (const place of places) {
+      const canonical = `${place.name} ${place.state} ${place.postcode}`
+      if (bySuburb.has(canonical)) continue
+      bySuburb.set(canonical, {
+        canonical,
+        name: place.name as string,
+        state: place.state as string,
+        postcode: place.postcode as string,
+        type: place.type,
+      })
+    }
+    if (places.length > 0) console.log(`${postcode}  ${places.length} place(s)`)
   }
 
   cache.suburbs = [...bySuburb.values()].sort((a, b) => a.canonical.localeCompare(b.canonical))
@@ -174,31 +170,25 @@ if (stage === 'place') {
   // call covering everything would sit well past McpClient's three-minute
   // timeout — the server asks the gazetteer serially at Nominatim's 1/second.
   const CHUNK = 25
-  const client = new McpClient()
   let done = 0
-  try {
-    for (let start = 0; start < todo.length; start += CHUNK) {
-      const batch = todo.slice(start, start + CHUNK)
-      const placedBatch = await geocodeSuburbs(
-        client,
-        batch.map((s, i) => ({ id: String(start + i), suburb: s.name, postcode: s.postcode, state: s.state })),
-      )
-      batch.forEach((suburb, i) => {
-        const centroid = placedBatch.get(String(start + i))
-        if (centroid) {
-          suburb.lat = centroid.lat
-          suburb.lon = centroid.lon
-        } else {
-          suburb.unplaced = true
-          console.log(`  could not place ${suburb.canonical}`)
-        }
-      })
-      done += batch.length
-      await writeCache(cachePath, cache)
-      console.log(`  ${done}/${todo.length}`)
-    }
-  } finally {
-    client.close()
+  for (let start = 0; start < todo.length; start += CHUNK) {
+    const batch = todo.slice(start, start + CHUNK)
+    const placedBatch = await geocodeSuburbs(
+      batch.map((s, i) => ({ id: String(start + i), suburb: s.name, postcode: s.postcode, state: s.state })),
+    )
+    batch.forEach((suburb, i) => {
+      const centroid = placedBatch.get(String(start + i))
+      if (centroid) {
+        suburb.lat = centroid.lat
+        suburb.lon = centroid.lon
+      } else {
+        suburb.unplaced = true
+        console.log(`  could not place ${suburb.canonical}`)
+      }
+    })
+    done += batch.length
+    await writeCache(cachePath, cache)
+    console.log(`  ${done}/${todo.length}`)
   }
 
   cache.placed_at = new Date().toISOString()
@@ -235,48 +225,41 @@ if (stage === 'measure') {
     .slice(0, limit ?? undefined)
   const byCanonical = new Map(cache.suburbs.map((s) => [s.canonical, s]))
 
-  const client = new McpClient()
-  await client.handshake()
-
-  try {
-    for (const [originId, origin] of Object.entries(searches.origins)) {
-      for (const mode of modes) {
-        const key = `${originId}:${mode}`
-        const todo = placed.filter((s) => s.indicative_minutes?.[key] === undefined)
-        if (todo.length === 0) {
-          console.log(`${key.padEnd(16)} already measured`)
-          continue
-        }
-
-        const report = (await client.callTool('route_places', {
-          places: todo.map((s) => ({ id: s.canonical, lat: s.lat, lng: s.lon })),
-          destination: origin.address,
-          travelMode: mode,
-          ...(mode === 'transit' ? { travelArriveBy: arriveBy } : {}),
-        })) as {
-          legs: Array<{ id: string; minutes: number }>
-          unroutable: string[]
-          matrixCalls: number
-          cachedLegs: number
-          router: string
-        }
-
-        for (const leg of report.legs) {
-          const suburb = byCanonical.get(leg.id)
-          if (!suburb) continue
-          suburb.indicative_minutes = { ...suburb.indicative_minutes, [key]: leg.minutes }
-        }
-        await writeCache(cachePath, cache)
-
-        console.log(
-          `${key.padEnd(16)} ${String(report.legs.length).padStart(3)} routed · ` +
-            `${report.unroutable.length} unroutable · ${report.matrixCalls} call(s) · ` +
-            `${report.cachedLegs} cached · router=${report.router}`,
-        )
+  for (const [originId, origin] of Object.entries(searches.origins)) {
+    for (const mode of modes) {
+      const key = `${originId}:${mode}`
+      const todo = placed.filter((s) => s.indicative_minutes?.[key] === undefined)
+      if (todo.length === 0) {
+        console.log(`${key.padEnd(16)} already measured`)
+        continue
       }
+
+      const report = (await callRoutePlaces({
+        places: todo.map((s) => ({ id: s.canonical, lat: s.lat, lng: s.lon })),
+        destination: origin.address,
+        travelMode: mode,
+        ...(mode === 'transit' ? { travelArriveBy: arriveBy } : {}),
+      })) as {
+        legs: Array<{ id: string; minutes: number }>
+        unroutable: string[]
+        matrixCalls: number
+        cachedLegs: number
+        router: string
+      }
+
+      for (const leg of report.legs) {
+        const suburb = byCanonical.get(leg.id)
+        if (!suburb) continue
+        suburb.indicative_minutes = { ...suburb.indicative_minutes, [key]: leg.minutes }
+      }
+      await writeCache(cachePath, cache)
+
+      console.log(
+        `${key.padEnd(16)} ${String(report.legs.length).padStart(3)} routed · ` +
+          `${report.unroutable.length} unroutable · ${report.matrixCalls} call(s) · ` +
+          `${report.cachedLegs} cached · router=${report.router}`,
+      )
     }
-  } finally {
-    client.close()
   }
 
   cache.measured_at = new Date().toISOString()

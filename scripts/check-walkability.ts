@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import { SiteConfigSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import {

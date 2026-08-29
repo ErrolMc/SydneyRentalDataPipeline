@@ -1,3 +1,6 @@
+// Must stay first: fills process.env from this package's `.env` (see src/env.ts).
+import '../src/env.js'
+
 import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
