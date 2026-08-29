@@ -198,7 +198,7 @@ function warnUnknownProvider(
 ): void {
   if (known.includes(value)) return;
   console.error(
-    `[realestate-mcp] configuration error: ${name}="${value}" is not one of ` +
+    `[sydney-rental-data-pipeline] configuration error: ${name}="${value}" is not one of ` +
       `${known.join(", ")}. Falling back to ${fallsBackTo}, which needs no key and will not ` +
       `fail — so measurements will silently disagree with ones taken as intended.`,
   );

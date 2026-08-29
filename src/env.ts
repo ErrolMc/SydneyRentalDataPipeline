@@ -31,7 +31,7 @@ if (existsSync(ENV_PATH)) {
     // Reading a `.env` needs Node 20.12. Older 20.x still runs the server fine,
     // so say what is being ignored rather than refusing to start.
     console.error(
-      `[realestate-mcp] ${ENV_PATH} needs Node 20.12 or newer to be read; ` +
+      `[sydney-rental-data-pipeline] ${ENV_PATH} needs Node 20.12 or newer to be read; ` +
         `this is ${process.version}, so its variables are being ignored.`,
     );
   } else {
@@ -42,7 +42,7 @@ if (existsSync(ENV_PATH)) {
       // somebody meant it to be used, and a missing key here shows up much
       // later as a quietly worse answer rather than as a failure.
       const message = e instanceof Error ? e.message : String(e);
-      console.error(`[realestate-mcp] could not read ${ENV_PATH}: ${message}`);
+      console.error(`[sydney-rental-data-pipeline] could not read ${ENV_PATH}: ${message}`);
     }
   }
 }

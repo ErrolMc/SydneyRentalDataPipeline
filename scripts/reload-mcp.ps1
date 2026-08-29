@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Rebuild realestate-mcp and drop the running server + its browser so the next
+  Rebuild the pipeline and drop the running MCP server + its browser so the next
   tool call picks up fresh code.
 
 .DESCRIPTION
@@ -17,7 +17,7 @@
     4. Reports whether the profile is warm
 
   Targeting is deliberately narrow: only node processes whose command line
-  references this repo's dist/index.js, and only Chrome processes whose command
+  references this repo's dist/cli.js (or the old dist/index.js), and only Chrome processes whose command
   line references the realestate-mcp profile. Your normal browser is untouched.
 
 .PARAMETER NoBuild
@@ -43,21 +43,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$entry = Join-Path $repo 'dist\index.js'
+$entry = Join-Path $repo 'dist\cli.js'
 
 function Write-Step($t) { Write-Host "`n$t" -ForegroundColor Cyan }
 function Write-Ok($t)   { Write-Host "  $t" -ForegroundColor Green }
 function Write-Warn2($t){ Write-Host "  $t" -ForegroundColor Yellow }
 
-# Match this repo's server only. Command lines vary ("node dist/index.js" vs an
-# absolute path), so match on the repo folder OR the dist/index.js suffix while
+# Match this repo's server only. Command lines vary ("node dist/cli.js mcp" vs an
+# absolute path), so match on the repo folder OR the dist/cli.js suffix while
 # excluding other projects.
 $repoLeaf = Split-Path $repo -Leaf
 function Get-ServerProcs {
   Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
     Where-Object {
       $c = $_.CommandLine
-      $c -and ($c -match 'dist[\\/]index\.js') -and
+      $c -and ($c -match 'dist[\\/](index|cli)\.js') -and
       ($c -match [regex]::Escape($repo) -or $c -match [regex]::Escape($repoLeaf) -or $c -notmatch '[A-Za-z]:\\')
     }
 }
@@ -66,7 +66,7 @@ function Get-ProfileChrome {
     Where-Object { $_.CommandLine -and $_.CommandLine -match 'realestate-mcp' }
 }
 
-Write-Host "realestate-mcp reload" -ForegroundColor White
+Write-Host "sydney-rental-data-pipeline reload" -ForegroundColor White
 Write-Host ("-" * 46)
 Write-Host "  repo:    $repo"
 Write-Host "  profile: $Profile"
@@ -83,7 +83,7 @@ if (Test-Path $Profile) {
         Measure-Object Length -Sum).Sum / 1MB, 1)
   Write-Host "  Profile exists:       yes ($mb MB)"
 } else {
-  Write-Warn2 "Profile missing - run:  node dist/index.js setup"
+  Write-Warn2 "Profile missing - run:  node dist/cli.js setup"
 }
 
 if ($CheckOnly) { Write-Host "`n(check-only, nothing changed)"; return }
@@ -157,7 +157,7 @@ import('./dist/browser.js').then(async b => {
 '@
   $out = & node -e $probe 2>&1 | Select-String -Pattern '^(WARM|COLD)\|' | Select-Object -First 1
   if ($out -match '^WARM\|(\d+)\|(.*)$') { Write-Ok "profile warm (HTTP $($Matches[1])) - $($Matches[2])" }
-  elseif ($out -match '^COLD\|(.*)$')    { Write-Warn2 "profile COLD: $($Matches[1])"; Write-Warn2 "run: node dist/index.js setup" }
+  elseif ($out -match '^COLD\|(.*)$')    { Write-Warn2 "profile COLD: $($Matches[1])"; Write-Warn2 "run: node dist/cli.js setup" }
   else                                    { Write-Warn2 "probe inconclusive: $out" }
 } finally { Pop-Location }
 

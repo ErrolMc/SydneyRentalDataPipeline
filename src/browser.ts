@@ -29,7 +29,7 @@ export class NotWarmError extends Error {
     super(
       `Blocked by realestate.com.au bot protection (${detail}).\n` +
         `The browser profile needs a one-time interactive warm-up.\n` +
-        `Run:  npx realestate-mcp setup\n` +
+        `Run:  node dist/cli.js setup   (in the pipeline repo)\n` +
         `(opens a Chrome window briefly, then closes it)`,
     );
     this.name = "NotWarmError";

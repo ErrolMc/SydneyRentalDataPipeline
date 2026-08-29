@@ -1,6 +1,6 @@
-#!/usr/bin/env node
 // Must stay first: fills process.env from `.env` before the modules below read
-// it at import time. See src/env.ts.
+// it at import time. See src/env.ts. (`dist/cli.js mcp` imports this module;
+// it also loads env first, so the order here is belt and braces.)
 import "./env.js";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,17 +11,16 @@ import { closeContext, fetchPage, NotWarmError } from "./browser.js";
 import { parseListingPage } from "./parse.js";
 import { buildListingUrl, suggestLocations } from "./search.js";
 import { fetchImages, IMAGE_SIZES } from "./images.js";
-import { geocodePlaces, routePlaces, type TravelMode } from "./distance.js";
 import { searchListings, SearchListingsInput } from "./lib/search-listings.js";
-import { runSetup } from "./cli.js";
 
-// `realestate-mcp setup` shares this binary so users only learn one command.
-if (process.argv[2] === "setup") {
-  await runSetup();
-  process.exit(0);
-}
-
-const server = new McpServer({ name: "realestate-mcp", version: "0.1.0" });
+/**
+ * The MCP adapter: what Claude Code talks to. Interactive use only —
+ * `search_listings` for ad-hoc questions and `get_listing` for the run
+ * protocol's absence-resolution step. The pipeline itself calls the same
+ * functions in-process (scripts/lib/tools.ts); `geocode_places` and
+ * `route_places` were only ever called by it, so they are no longer tools.
+ */
+const server = new McpServer({ name: "sydney-rental-data-pipeline", version: "0.1.0" });
 
 const ok = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -173,110 +172,6 @@ server.registerTool(
   async ({ query, max }) => {
     try {
       return ok(await suggestLocations(query, max));
-    } catch (e) {
-      return fail(explain(e));
-    }
-  },
-);
-
-server.registerTool(
-  "geocode_places",
-  {
-    title: "Coordinates for many place names",
-    description:
-      "Turn place names or addresses into coordinates — suburbs, streets, buildings. " +
-      "Different from resolve_location, which returns canonical REA suburb NAMES and no " +
-      "position at all; use that one to disambiguate before searching, and this one when " +
-      "you need somewhere on a map. Goes through the same provider chain and the same " +
-      "disk cache as travel measurement, so a position asked for twice costs one call, " +
-      "and each result says which provider actually answered rather than which was " +
-      "configured. `precision` is load-bearing: `area` means a locality centroid, which " +
-      "is the right answer for a suburb and the wrong thing to quote as a property's " +
-      "position. Anything nothing can place comes back under `unresolved` — never a " +
-      "guessed coordinate.",
-    inputSchema: {
-      queries: z
-        .array(z.string().min(1))
-        .min(1)
-        .max(500)
-        .describe(
-          'Place names or addresses, e.g. "Balmain, NSW 2041, Australia" or ' +
-            '"275 Kent Street, Sydney NSW 2000"',
-        ),
-      prefer: z
-        .enum(["precise", "locality"])
-        .default("precise")
-        .describe(
-          'What kind of point you want. "precise" takes the sharpest hit — right for an ' +
-            'address. "locality" takes the suburb centroid and treats a sharper hit as the ' +
-            'consolation prize — right for a place NAME, and not interchangeable: asking ' +
-            'precisely for "Westleigh, NSW 2120" can return a street inside Westleigh, ' +
-            "1.5km from its centre.",
-        ),
-    },
-  },
-  async ({ queries, prefer }) => {
-    try {
-      return ok(await geocodePlaces(queries, prefer === "locality"));
-    } catch (e) {
-      return fail(explain(e));
-    }
-  },
-);
-
-server.registerTool(
-  "route_places",
-  {
-    title: "Routed time from many places to one destination",
-    description:
-      "Routed travel time from each of many coordinates to a single destination. " +
-      "Built for deciding WHICH suburbs are worth searching, not for describing a " +
-      "property: you supply the coordinates, so nothing is geocoded here. Measures " +
-      "INTO the destination (the commute direction), which matters for transit — " +
-      "arriving somewhere by 9am is not the same trip as leaving there at 9am. " +
-      "Results are cached on disk and deduped, so re-asking is free. A suburb " +
-      "centroid is an area-level position by nature: fine for picking a search " +
-      "envelope, never quote it as a listing's commute. " +
-      "With travelMode:transit each leg also carries a `journey` — the actual " +
-      "sequence of walks and services with their product classes, service names " +
-      "and stops, plus isWalk, hasFerry and interchanges. So you can tell a " +
-      "ferry from a train from a 'transit' answer that is really just a walk, " +
-      "instead of trusting the mode you asked for.",
-    inputSchema: {
-      places: z
-        .array(
-          z.object({
-            id: z.string().describe("Your identifier, echoed back on the leg"),
-            lat: z.number().min(-90).max(90),
-            lng: z.number().min(-180).max(180),
-          }),
-        )
-        .min(1)
-        .max(1000)
-        .describe("Origins to measure from"),
-      destination: z
-        .string()
-        .describe('Address or bare "lat,lng", e.g. "275 Kent St, Sydney NSW 2000"'),
-      travelMode: z.enum(["walk", "drive", "transit"]).default("walk"),
-      travelArriveBy: z
-        .string()
-        .optional()
-        .describe(
-          'RFC 3339 moment to arrive by, e.g. "2026-08-25T09:00:00+10:00". Required for ' +
-            "travelMode:transit and ignored otherwise.",
-        ),
-    },
-  },
-  async ({ places, destination, travelMode, travelArriveBy }) => {
-    try {
-      return ok(
-        await routePlaces(
-          places.map((p) => ({ id: p.id, coord: { lat: p.lat, lng: p.lng } })),
-          destination,
-          travelMode as TravelMode,
-          travelArriveBy,
-        ),
-      );
     } catch (e) {
       return fail(explain(e));
     }

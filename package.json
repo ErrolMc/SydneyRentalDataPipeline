@@ -1,11 +1,11 @@
 {
-  "name": "realestate-mcp",
+  "name": "sydney-rental-data-pipeline",
   "version": "0.1.0",
-  "description": "MCP server for searching realestate.com.au listings",
+  "description": "The data pipeline behind the Sydney rental findings site — captures realestate.com.au, measures travel, scores, and writes the findings repo's data/. MCP adapter included.",
   "type": "module",
   "private": true,
   "bin": {
-    "realestate-mcp": "dist/index.js"
+    "sydney-rental-pipeline": "dist/cli.js"
   },
   "files": [
     "dist"
@@ -15,7 +15,7 @@
     "dev": "tsc --watch",
     "typecheck": "tsc -p tsconfig.scripts.json",
     "setup": "node dist/cli.js setup",
-    "start": "node dist/index.js",
+    "start": "node dist/cli.js mcp",
     "prepare": "npm run build",
     "validate:data": "tsx scripts/validate-data.ts",
     "capture:run": "tsx scripts/capture-run.ts",
@@ -44,11 +44,11 @@
     "aws4fetch": "^1.0.20",
     "patchright": "^1.52.5",
     "sharp": "^0.35.3",
+    "tsx": "^4.23.12",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }
 }

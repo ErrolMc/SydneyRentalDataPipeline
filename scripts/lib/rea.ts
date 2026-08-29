@@ -5,15 +5,15 @@ import type { PropertyType } from '../../../SydneyRealEstateFindings/src/lib/sch
 import type { RawListing } from './raw'
 
 /**
- * Mapping realestate-mcp's `Listing` onto the shape a run needs.
+ * Mapping the search library's `Listing` (src/types.ts) onto the shape a run needs.
  *
- * The capture file stores what the MCP server actually returned, verbatim, and
+ * The capture file stores what the search actually returned, verbatim, and
  * this module is the only thing that interprets it. That split is deliberate:
  * REA's payload is a moving target, and when a mapping turns out to be wrong
  * the fix is to change this file and replay the capture — not to search REA
  * again and hope the same listings come back.
  *
- * Server: E:\Personal Projects\RealEstateMCP (tools `search_listings`,
+ * Source: this repo's src/, formerly the RealEstateMCP server (its tools `search_listings`,
  * `get_listing`, `resolve_location`).
  */
 

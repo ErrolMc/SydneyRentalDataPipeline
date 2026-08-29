@@ -609,18 +609,20 @@ share-house classifier), `ledger.ts` (merge / absence / rejections), `entry.ts`
 
 ## Done means
 
-- [ ] Findings repo: no `scripts/` besides `check-auth.ts`, the four site checks and the
+- [x] Findings repo: no `scripts/` besides `check-auth.ts`, the four site checks and the
       `scripts/lib/json-io.ts` they read data through; gate
       `typecheck && build && check:auth && check:filters && check:listings &&
-      check:search-runs && check:studios` passes; site renders the committed runs unchanged.
-- [ ] Pipeline repo: every former check passes from here; replay of both runs is
-      byte-identical (git blobs `fc2dc174…` / `910cfb78…`); `node dist/cli.js --help`
-      lists the subcommands; Claude Code's `realestate` MCP entry works via
-      `dist/cli.js mcp`.
-- [ ] One `.env` (here) + one `.env.local` (findings). `.env.pipeline` gone.
-- [ ] ADR 0005 committed; AGENT.md runs from this repo; this file updated with what
+      check:search-runs && check:studios` passes (2026-08-30, `039d1d2`); the site's
+      `data/` is untouched, so it renders the committed runs unchanged.
+- [x] Pipeline repo: every former check passes from here; replay of both runs is
+      byte-identical (git blobs `fc2dc174…` / `910cfb78…`, verified after Steps 2, 3
+      and 6); `node dist/cli.js --help` lists the subcommands; Claude Code's `realestate`
+      MCP entry is `dist/cli.js mcp` and answers `tools/list` with the four tools.
+- [x] One `.env` (here) + one `.env.local` (findings). `.env.pipeline` gone. (`.env` still
+      wants `TFNSW_API_KEY` and the four R2 secrets from Errol.)
+- [x] ADR 0005 committed; AGENT.md runs from this repo; this file updated with what
       went differently, then kept (it is the record of the move).
-- [ ] Both repos pushed — **ask Errol before pushing**, as always.
+- [ ] Both repos pushed — **ask Errol before pushing**, as always. Not pushed.
 
 ## Execution log (2026-08-30)
 
@@ -657,6 +659,27 @@ need Errol's word are marked **(Errol)**.
   `finally` and calls `closeBrowser()`. Two comments still mention `McpClient`'s timeout
   (`build-envelope.ts:170`, `enrich-transit.ts:70`) — they explain the batching that
   Phase 2 removes, left as-is.
-- Step 4: findings' local `.env.pipeline` deleted (it held only `R2_BUCKET`). The
-  findings-side text changes this step lists (README pointer, `.env.example:19`) are
+- Step 4 (`5dd5d34`): findings' local `.env.pipeline` deleted (it held only `R2_BUCKET`).
+  The findings-side text changes this step lists (README pointer, `.env.example:19`) are
   batched into the Step 5 findings commit so each repo still gets one commit per step.
+- Step 5 (findings `039d1d2`): the doc sweep was done by six parallel agents, one per
+  document set, then grep-verified; every remaining `RealEstateMCP` / `.env.pipeline`
+  mention is historical ("formerly", "is gone"). `sharp` stays in the findings lockfile as
+  Next's own dependency — expected. Two pre-existing untruths were corrected while there
+  because the new text had to say something: README/AGENT.md claimed "TfNSW is not used at
+  all"; the code has routed transit through TfNSW-when-keyed since ITEM-6 (the committed
+  runs report `router: google` because the key was never set). **(Errol)** ADR 0005 is
+  written; the findings gate passes; nothing pushed.
+- Step 6: dispatch is `tsImport` from `tsx/esm/api` (scoped, no global register) with
+  `process.argv` set to what each script expects; `tsx` became a runtime dependency.
+  Subcommands: `setup capture build replay envelope enrich check validate audit reset mcp`
+  (`run` prints that it is Phase 2). `src/index.ts` → `src/mcp.ts` (four tools, server name
+  `sydney-rental-data-pipeline`), old `src/cli.ts` → `src/setup.ts`. Verified: `--help`;
+  `check scoring`; **replay of both runs through the CLI reproduces the blobs**; an MCP
+  `initialize` + `tools/list` over stdio returns exactly the four tools. `~/.claude.json`
+  user-scope entry now `node <pipeline>/dist/cli.js mcp`; `.mcp.json` likewise. README and
+  CLAUDE.md rewritten for the pipeline framing. `REALESTATE_MCP_*` env names, the
+  `~/.realestate-mcp/` profile path and the `realestate-mcp/0.1` User-Agent are unchanged
+  on purpose.
+- **Not done, by design:** pushing (ask Errol); `TFNSW_API_KEY` and R2 keys in `.env`;
+  the distance-cache copy-or-abandon question; Phase 2.
