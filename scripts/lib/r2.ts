@@ -3,7 +3,7 @@ import process from 'node:process'
 
 import { AwsClient } from 'aws4fetch'
 
-import { REPO_ROOT } from './json-io'
+import { FINDINGS_DIR } from './json-io'
 
 /**
  * Cloudflare R2 — where listing photos are served from.
@@ -39,7 +39,7 @@ function loadPipelineEnv(): void {
   if (envLoaded) return
   envLoaded = true
   try {
-    process.loadEnvFile(path.join(REPO_ROOT, '.env.pipeline'))
+    process.loadEnvFile(path.join(FINDINGS_DIR, '.env.pipeline'))
   } catch {
     // No file, or unreadable. Configuration is reported by `r2ConfigFromEnv`.
   }

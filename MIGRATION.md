@@ -350,11 +350,21 @@ working-tree bytes; see Phase 0):
 npm run replay:run -- "E:/Personal Projects/SydneyRealEstate/captures/2026-08-24-walk15.json"    --run-id=2026-08-24a
 npm run replay:run -- "E:/Personal Projects/SydneyRealEstate/captures/2026-08-24-transit25.json" --run-id=2026-08-25a
 
-# pass = git sees no change in the findings repo
+# pass = git sees no content change in the findings repo
 cd ../SydneyRealEstateFindings
-git status --porcelain data/          # must be empty
+git diff --stat data/                 # must print nothing
 git hash-object data/runs/*/run.json  # fc2dc174… and 910cfb78…, as recorded in Phase 0
+git checkout -- data/runs/            # put the CRLF working copies back
 ```
+
+**Corrected while running it:** `git status --porcelain data/` shows ` M` for both files
+after a correct replay — the script writes LF, the working copy was CRLF, and with
+`core.autocrlf=true` git flags the eol change even though `git diff` is empty and the
+blob hash is unchanged. The pass criterion is the empty `git diff --stat` plus the two
+hashes; then `git checkout -- data/runs/` restores the CRLF copies so the next replay
+starts from the same state. **Passed at Step 2** (2026-08-30): both hashes matched, and
+the six moved checks (`check:scoring|walk|searches|transit|ledger`, `validate:data`) ran
+from this repo with output identical to the baseline apart from the scope line.
 
 Replay is deterministic at HEAD. `replay-run.ts` imports `lib/entry`, `lib/json-io`,
 `lib/raw`, `lib/rea`, `lib/searches` and the site's `schema` (transitively `lib/score`,
@@ -626,3 +636,9 @@ need Errol's word are marked **(Errol)**.
 - Decisions taken without Errol (all reversible, none pushed): §3.1 → cross-repo relative
   imports; the four site checks stay in findings; zod 4.4.3 and TypeScript ^7.0.2 in this
   repo; Step 6 dispatch via tsx `register()` + argv splice, scripts untouched.
+- Step 1 (`2816b1f`): `npm install` first resolved zod 4.5.2 and sharp 0.35.4; re-pinned
+  to 4.4.3 / 0.35.3 so both lockfiles agree. `tsconfig.scripts.json` type-checks the
+  cross-repo schema files without any zod `paths` trick — TypeScript 7 treats the two
+  identical copies as compatible. `sharp`/`aws4fetch` went into `dependencies`, not
+  `devDependencies`: this package runs them.
+- Step 2: the acceptance test already passes here — replay never used the MCP hop.

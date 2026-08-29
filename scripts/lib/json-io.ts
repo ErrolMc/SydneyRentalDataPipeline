@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import type { z } from 'zod'
 
@@ -11,16 +12,26 @@ import type { z } from 'zod'
  * reflowed blob.
  */
 
-export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-export const DATA_DIR = path.join(REPO_ROOT, 'data')
-export const PUBLIC_DIR = path.join(REPO_ROOT, 'public')
+/** This package's root — where `package.json` and `.env` live. */
+export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+/**
+ * The findings repo: the site whose `data/` and `public/` this pipeline writes.
+ * `FINDINGS_DIR` in the environment overrides; the default is the sibling checkout,
+ * resolved from this module rather than from the working directory, so the
+ * answer is the same whichever directory a script is started from.
+ */
+export const FINDINGS_DIR =
+  process.env.FINDINGS_DIR?.trim() || path.resolve(PACKAGE_ROOT, '..', 'SydneyRealEstateFindings')
+export const DATA_DIR = path.join(FINDINGS_DIR, 'data')
+export const PUBLIC_DIR = path.join(FINDINGS_DIR, 'public')
 
 export function dataPath(...segments: string[]): string {
   return path.join(DATA_DIR, ...segments)
 }
 
 export async function readJsonFile<T>(absolute: string, schema: z.ZodType<T>): Promise<T> {
-  const relative = path.relative(REPO_ROOT, absolute).replace(/\\/g, '/')
+  const relative = path.relative(FINDINGS_DIR, absolute).replace(/\\/g, '/')
 
   let raw: string
   try {

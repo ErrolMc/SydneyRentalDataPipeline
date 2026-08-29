@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 
-import { REPO_ROOT } from './json-io'
+import { PACKAGE_ROOT } from './json-io'
 
 /**
  * A minimal MCP stdio client for the realestate server.
@@ -32,7 +32,7 @@ import { REPO_ROOT } from './json-io'
  */
 const SERVER_ENTRY =
   process.env.REALESTATE_MCP_ENTRY?.trim() ||
-  path.join(REPO_ROOT, '..', 'RealEstateMCP', 'dist', 'index.js')
+  path.join(PACKAGE_ROOT, 'dist', 'index.js')
 const CALL_TIMEOUT_MS = 180_000
 
 interface Pending {
