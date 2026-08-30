@@ -32,11 +32,14 @@
  * this. That costs one page fetch per listing, so it is an upgrade for a
  * shortlist, not a way to position a whole search.
  *
- * Routers (REALESTATE_MCP_ROUTER):
+ * Road routers (REALESTATE_MCP_ROUTER — `walk` and `drive` only):
  *   valhalla (default) — FOSSGIS public instance, no API key
  *   ors                — OpenRouteService, needs ORS_API_KEY, 2000 calls/day
- *   google             — Routes API, needs GOOGLE_MAPS_API_KEY. The only one
- *                        that can do `transit`.
+ *   google             — Routes API, needs GOOGLE_MAPS_API_KEY
+ * Transit routers (REALESTATE_MCP_TRANSIT_ROUTER — `transit` only):
+ *   tfnsw              — Trip Planner, needs TFNSW_API_KEY; answers in legs
+ *   google             — Routes API; a duration and nothing else
+ *   unset              — tfnsw when TFNSW_API_KEY is set, google otherwise
  * Valhalla and ORS model no traffic-light delay, so CBD walk times read a few
  * minutes optimistic. Treat them as good to about ±3 min, not to the minute.
  *
@@ -65,7 +68,8 @@ export interface Coord {
 
 /**
  * `transit` is answered by **TfNSW's Trip Planner** when `TFNSW_API_KEY` is set,
- * and by Google otherwise.
+ * and by Google otherwise — unless `REALESTATE_MCP_TRANSIT_ROUTER` names one
+ * explicitly, in which case that one and no fallback (see `transitUsesTfnsw`).
  *
  * This used to read "transit is Google-only — no free router does public
  * transport". That was wrong about the free part and, more importantly, about
@@ -169,6 +173,9 @@ const CACHE_PATH =
 // Trimmed as well as lowercased: a trailing space off a `.env` line is a
 // different string, and nobody has ever meant to configure "google ".
 const ROUTER = (process.env.REALESTATE_MCP_ROUTER ?? "valhalla").trim().toLowerCase();
+// Empty means "decide by whether TFNSW_API_KEY is set" — the behaviour before this
+// setting existed, kept so an unchanged .env keeps measuring the same way.
+const TRANSIT_ROUTER = (process.env.REALESTATE_MCP_TRANSIT_ROUTER ?? "").trim().toLowerCase();
 const GEOCODER = (process.env.REALESTATE_MCP_GEOCODER ?? "photon").trim().toLowerCase();
 
 /**
@@ -179,7 +186,8 @@ const GEOCODER = (process.env.REALESTATE_MCP_GEOCODER ?? "photon").trim().toLowe
  * quietly measures with a different provider than the caller asked for, and
  * every number after it is subtly not what the committed ones were:
  * `REALESTATE_MCP_ROUTER=tfnsw` looks like it should route transit and instead
- * moves *walking* onto Valhalla, and a misspelled geocoder gives up Google's
+ * moves *walking* onto Valhalla (transit has its own setting), and a misspelled
+ * geocoder gives up Google's
  * markedly better Australian unit addresses, which is what decides whether a
  * travel time is measured or a suburb centroid.
  *
@@ -205,6 +213,14 @@ function warnUnknownProvider(
 }
 
 warnUnknownProvider("REALESTATE_MCP_ROUTER", ROUTER, ["valhalla", "ors", "google"], "Valhalla");
+if (TRANSIT_ROUTER !== "") {
+  warnUnknownProvider(
+    "REALESTATE_MCP_TRANSIT_ROUTER",
+    TRANSIT_ROUTER,
+    ["tfnsw", "google"],
+    "whichever TFNSW_API_KEY decides",
+  );
+}
 warnUnknownProvider("REALESTATE_MCP_GEOCODER", GEOCODER, ["photon", "nominatim", "google"], "Photon");
 const ORS_KEY = process.env.ORS_API_KEY;
 const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY;
@@ -844,10 +860,22 @@ const GOOGLE_TRAVEL_MODE: Record<TravelMode, string> = {
  * Exported so `enrichWithTravel` can run it up front — see the note there.
  */
 export function assertRoutable(mode: TravelMode, arriveBy?: string): void {
+  if (mode === "transit" && TRANSIT_ROUTER === "tfnsw" && !tfnswKey()) {
+    // Asked for explicitly, so no quiet fallback to Google: a transit number
+    // from a different provider is exactly what the setting exists to prevent.
+    throw new Error(
+      "REALESTATE_MCP_TRANSIT_ROUTER=tfnsw but TFNSW_API_KEY is not set. Get one at " +
+        "opendata.transport.nsw.gov.au (add the Trip Planner APIs to an application), set " +
+        "REALESTATE_MCP_TRANSIT_ROUTER=google, or unset it to fall back to Google.",
+    );
+  }
   const needsGoogle = (mode === "transit" && !transitUsesTfnsw()) || ROUTER === "google";
   if (needsGoogle && !GOOGLE_KEY) {
     throw new Error(
-      mode === "transit"
+      mode === "transit" && TRANSIT_ROUTER === "google"
+        ? "REALESTATE_MCP_TRANSIT_ROUTER=google but GOOGLE_MAPS_API_KEY is not set. Set the key, " +
+          "or set REALESTATE_MCP_TRANSIT_ROUTER=tfnsw with a TFNSW_API_KEY."
+        : mode === "transit"
         ? "transit needs either TFNSW_API_KEY or GOOGLE_MAPS_API_KEY. Prefer TfNSW: it is free " +
           "(60,000 calls a day), it is the operator's own planner, and it reports the journey's " +
           "legs, so a ferry is a measured fact rather than a guess. Get one at " +
@@ -931,7 +959,8 @@ async function googleMatrix(
 /**
  * Transit never goes to the road routers regardless of `REALESTATE_MCP_ROUTER` —
  * asking Valhalla for a train time would silently return a walking time. It goes
- * to TfNSW when `TFNSW_API_KEY` is set and Google otherwise.
+ * where `REALESTATE_MCP_TRANSIT_ROUTER` says, or — unset — to TfNSW when
+ * `TFNSW_API_KEY` is set and Google otherwise.
  *
  * **The TfNSW path measures `targets → origin`, not `origin → targets`.** That
  * is deliberate and it is not what the Google path does. `googleMatrix` indexes
@@ -948,17 +977,29 @@ function matrix(
   arriveBy?: string,
 ): Promise<MatrixLeg[]> {
   if (mode === "transit") {
-    const key = tfnswKey();
-    if (key) return tfnswManyToOne(targets, origin, arriveBy as string, key);
+    if (transitUsesTfnsw()) return tfnswManyToOne(targets, origin, arriveBy as string, requireTfnswKey());
     return googleMatrix(origin, targets, mode, arriveBy);
   }
   if (ROUTER === "google") return googleMatrix(origin, targets, mode, arriveBy);
   return ROUTER === "ors" ? orsMatrix(origin, targets, mode) : valhallaMatrix(origin, targets, mode);
 }
 
-/** Whether transit goes to TfNSW. Falls back to Google when no key is set. */
+/**
+ * Whether transit goes to TfNSW. An explicit `REALESTATE_MCP_TRANSIT_ROUTER` is
+ * obeyed as written — `tfnsw` without a key is a configuration error that
+ * `assertRoutable` reports, not a reason to use Google. Unset, the key decides.
+ */
 function transitUsesTfnsw(): boolean {
+  if (TRANSIT_ROUTER === "tfnsw") return true;
+  if (TRANSIT_ROUTER === "google") return false;
   return tfnswKey() !== undefined;
+}
+
+/** The key, on a path `transitUsesTfnsw` chose. `assertRoutable` runs first; this is the backstop. */
+function requireTfnswKey(): string {
+  const key = tfnswKey();
+  if (!key) throw new Error("REALESTATE_MCP_TRANSIT_ROUTER=tfnsw but TFNSW_API_KEY is not set");
+  return key;
 }
 
 /** What actually answered, for the report — `REALESTATE_MCP_ROUTER` may not be it. */
@@ -1470,9 +1511,8 @@ async function manyToOne(
   }
   assertRoutable(mode, arriveBy);
 
-  if (mode === "transit") {
-    const key = tfnswKey();
-    if (key) return tfnswManyToOne(origins, destination, arriveBy as string, key);
+  if (mode === "transit" && transitUsesTfnsw()) {
+    return tfnswManyToOne(origins, destination, arriveBy as string, requireTfnswKey());
   }
 
   const body: Record<string, unknown> = {

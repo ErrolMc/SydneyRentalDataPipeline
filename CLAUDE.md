@@ -177,8 +177,10 @@ CBD walk times read a few minutes optimistic — treat as ±3 min.
 
 ### Transit
 
-**`travelMode: "transit"` never consults `REALESTATE_MCP_ROUTER`.** It goes to
-TfNSW's Trip Planner when `TFNSW_API_KEY` is set and to Google otherwise — no
+**`travelMode: "transit"` never consults `REALESTATE_MCP_ROUTER`.** It has its
+own setting, `REALESTATE_MCP_TRANSIT_ROUTER` (`tfnsw` | `google`, obeyed without
+fallback); unset, it goes to TfNSW's Trip Planner when `TFNSW_API_KEY` is set
+and to Google otherwise — no
 free router does public transport, and approximating a train time from road
 distance would be the exact fake precision this module exists to remove. Asking
 Valhalla for it throws rather than quietly returning a walking time.

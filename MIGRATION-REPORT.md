@@ -126,8 +126,10 @@ the MCP adapter, so it cannot run while Claude Code has the server up.
    Google and `enrich:transit` refuses to write until it is set); the four R2 secrets are
    empty (`build`/`reset` refuse; `validate --check-remote` unavailable). `check:r2` will
    tell you when they are right.
-3. **`REALESTATE_MCP_ROUTER=valhalla`** per the plan's template — the MCP entry you were
-   actually running had `google`. Pick one.
+3. ~~`REALESTATE_MCP_ROUTER=valhalla` per the plan's template~~ — resolved: `.env` now says
+   `google` for road modes (what the committed runs used), and transit has its own
+   setting, `REALESTATE_MCP_TRANSIT_ROUTER` (`tfnsw` | `google`, no fallback when set;
+   currently `google` until the TfNSW key exists). Added after Phase 1, as its own commit.
 4. **`~/.realestate-mcp/distance-cache.json`** (809 KB, the server's live cache until
    today) vs the empty committed `data/knowledge/mcp-cache.json` that `.env` now points
    at. Copy it over (one commit in findings) or start fresh. Replays do not route, so
