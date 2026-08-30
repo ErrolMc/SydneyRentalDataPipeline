@@ -4,7 +4,7 @@ import '../src/env.js'
 import { readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
-import { SearchesSchema, SiteConfigSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { SearchesSchema, SiteConfigSchema } from 'sydney-rental-schema'
 import { geocodeSuburbs } from './lib/geocode-places'
 import { dataPath, readJsonFile } from './lib/json-io'
 import { callResolveLocation, callRoutePlaces } from './lib/tools'

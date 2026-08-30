@@ -11,7 +11,7 @@ import {
   TravelMode,
   travelKey,
   type TravelPrecision,
-} from '../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
 import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
 import { callRoutePlaces } from './lib/tools'
 import { RoutePlacesReportSchema, toMislabelled } from './lib/route-places'

@@ -14,7 +14,7 @@ import {
   type Place,
   type Search,
   type Searches,
-} from '../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import {
   evaluateSearches,

@@ -1,4 +1,4 @@
-import type { SiteConfig } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import type { SiteConfig } from 'sydney-rental-schema'
 
 /**
  * Walkability from OpenStreetMap, via Overpass (PLAN.md §8.1).

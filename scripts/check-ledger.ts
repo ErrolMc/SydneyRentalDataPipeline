@@ -3,7 +3,7 @@ import '../src/env.js'
 
 import process from 'node:process'
 
-import { LedgerSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { LedgerSchema } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import { mergeRejected, type CapturedRejection } from './lib/ledger'
 

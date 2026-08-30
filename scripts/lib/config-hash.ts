@@ -1,5 +1,5 @@
 import { sha256 } from './json-io'
-import type { SiteConfig } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import type { SiteConfig } from 'sydney-rental-schema'
 
 /**
  * The enrichment cache key (PLAN.md §3.4): sha256 over the three parts of

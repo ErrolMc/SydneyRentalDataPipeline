@@ -15,7 +15,7 @@ import {
   SiteConfigSchema,
   SuburbsSchema,
   type Run,
-} from '../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
 import { DATA_DIR, PUBLIC_DIR, dataPath, readJsonFile } from './lib/json-io'
 import { objectExists, objectKeyFor, r2ConfigFromEnv } from './lib/r2'
 

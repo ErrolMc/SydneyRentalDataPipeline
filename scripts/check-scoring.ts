@@ -1,7 +1,7 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
 import '../src/env.js'
 
-import { CriteriaSchema, OFFICE_ORIGIN_ID, type Travel } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { CriteriaSchema, OFFICE_ORIGIN_ID, type Travel } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import {
   commuteFromTravel,

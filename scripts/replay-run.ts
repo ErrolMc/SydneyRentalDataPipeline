@@ -11,7 +11,7 @@ import {
   SuburbsSchema,
   type ListingEntry,
   type Run,
-} from '../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
 import { buildListingEntry, sortListings } from './lib/entry'
 import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
 import { suburbKey, type RawListing } from './lib/raw'

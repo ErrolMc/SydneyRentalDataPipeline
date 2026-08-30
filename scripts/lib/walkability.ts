@@ -1,4 +1,4 @@
-import type { LedgerEntry, SiteConfig } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import type { LedgerEntry, SiteConfig } from 'sydney-rental-schema'
 import { haversineMetres, walkMinutes, type Poi, type Point } from './overpass'
 
 /**

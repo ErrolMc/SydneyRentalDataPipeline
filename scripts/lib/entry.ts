@@ -7,8 +7,8 @@ import type {
   ListingState,
   SuburbProfile,
   Travel,
-} from '../../../SydneyRealEstateFindings/src/lib/schema'
-import { OFFICE_ORIGIN_ID } from '../../../SydneyRealEstateFindings/src/lib/schema/travel'
+} from 'sydney-rental-schema'
+import { OFFICE_ORIGIN_ID } from 'sydney-rental-schema'
 import { listingImagePath } from './images'
 import { normaliseFeature, suburbKey, type RawListing } from './raw'
 import { commuteFromTravel, scoreListing } from './score'

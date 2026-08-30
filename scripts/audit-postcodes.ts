@@ -3,7 +3,7 @@ import '../src/env.js'
 
 import process from 'node:process'
 
-import { CriteriaSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { CriteriaSchema } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import { callResolveLocation } from './lib/tools'
 

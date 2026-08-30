@@ -3,7 +3,7 @@ import '../src/env.js'
 
 import process from 'node:process'
 
-import { LedgerSchema, SiteConfigSchema, type Ledger } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { LedgerSchema, SiteConfigSchema, type Ledger } from 'sydney-rental-schema'
 import { computeConfigHash } from './lib/config-hash'
 import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
 import { fetchWalkabilityPois, type Point } from './lib/overpass'

@@ -1,16 +1,15 @@
 import type { z } from 'zod'
 
-import { FACTOR_KEYS } from '../../../SydneyRealEstateFindings/src/lib/schema/config'
+import { FACTOR_KEYS, travelKey } from 'sydney-rental-schema'
 import type {
   Criteria,
   Enrichment,
   EnrichmentStatus,
   FactorKey,
+  ScoresSchema,
   SuburbProfile,
   Travel,
-} from '../../../SydneyRealEstateFindings/src/lib/schema'
-import { travelKey } from '../../../SydneyRealEstateFindings/src/lib/schema/travel'
-import type { ScoresSchema } from '../../../SydneyRealEstateFindings/src/lib/schema/run'
+} from 'sydney-rental-schema'
 
 type Scores = z.infer<typeof ScoresSchema>
 type Factor = Scores['factors'][FactorKey]

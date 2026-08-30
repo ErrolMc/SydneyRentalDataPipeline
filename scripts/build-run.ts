@@ -22,7 +22,7 @@ import {
   type SuburbProfile,
   type Suburbs,
   placesByCanonical,
-} from '../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
 import { computeConfigHash } from './lib/config-hash'
 import { buildListingEntry, sortListings } from './lib/entry'
 import { geocodeSuburbs, type Centroid } from './lib/geocode-places'

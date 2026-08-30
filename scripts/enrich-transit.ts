@@ -3,7 +3,7 @@ import '../src/env.js'
 
 import process from 'node:process'
 
-import { LedgerSchema, SiteConfigSchema, travelKey, OFFICE_ORIGIN_ID } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { LedgerSchema, SiteConfigSchema, travelKey, OFFICE_ORIGIN_ID } from 'sydney-rental-schema'
 import { dataPath, readJsonFile, writeJsonFile, isoNow } from './lib/json-io'
 import { callRoutePlaces } from './lib/tools'
 import {

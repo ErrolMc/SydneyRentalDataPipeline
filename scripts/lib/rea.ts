@@ -1,7 +1,12 @@
 import { z } from 'zod'
 
-import { TravelMode, TravelReportSchema, TravelSchema, type Travel } from '../../../SydneyRealEstateFindings/src/lib/schema'
-import type { PropertyType } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import {
+  TravelMode,
+  TravelReportSchema,
+  TravelSchema,
+  type PropertyType,
+  type Travel,
+} from 'sydney-rental-schema'
 import type { RawListing } from './raw'
 
 /**

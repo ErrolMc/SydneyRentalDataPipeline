@@ -1,4 +1,4 @@
-import type { AreaSource, PropertyType, Travel } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import type { AreaSource, PropertyType, Travel } from 'sydney-rental-schema'
 
 /**
  * The normalised listing shape the run pipeline works in.

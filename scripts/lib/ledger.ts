@@ -1,5 +1,5 @@
-import { GONE_STATUSES } from '../../../SydneyRealEstateFindings/src/lib/schema'
-import type { LedgerEntry, ListingState, ListingStatus, RejectedEntry } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import { GONE_STATUSES } from 'sydney-rental-schema'
+import type { LedgerEntry, ListingState, ListingStatus, RejectedEntry } from 'sydney-rental-schema'
 import type { RawListing } from './raw'
 
 /**

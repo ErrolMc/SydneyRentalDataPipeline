@@ -4,7 +4,7 @@ import '../src/env.js'
 import { readFileSync } from 'node:fs'
 import process from 'node:process'
 
-import { CriteriaSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { CriteriaSchema } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import {
   ReaCaptureSchema,

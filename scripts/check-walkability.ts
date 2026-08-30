@@ -1,7 +1,7 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
 import '../src/env.js'
 
-import { SiteConfigSchema } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { SiteConfigSchema } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import {
   cellsFor,

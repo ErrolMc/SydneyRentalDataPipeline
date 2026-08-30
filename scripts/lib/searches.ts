@@ -9,8 +9,8 @@ import type {
   Travel,
   TravelMode,
   TravelReport,
-} from '../../../SydneyRealEstateFindings/src/lib/schema'
-import { travelKey } from '../../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
+import { travelKey } from 'sydney-rental-schema'
 
 /**
  * Turning saved searches into MCP queries, and MCP results back into answers

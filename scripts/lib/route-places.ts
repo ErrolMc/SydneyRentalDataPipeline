@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { JourneyComposition, MislabelledTravel } from '../../../SydneyRealEstateFindings/src/lib/schema'
+import type { JourneyComposition, MislabelledTravel } from 'sydney-rental-schema'
 
 /**
  * The `route_places` boundary: what the MCP server returns, and how it becomes

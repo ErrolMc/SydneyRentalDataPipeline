@@ -3,8 +3,8 @@ import '../src/env.js'
 
 import process from 'node:process'
 
-import { IndexSchema, PRODUCT_CLASS, RunSchema, travelKey, OFFICE_ORIGIN_ID } from '../../SydneyRealEstateFindings/src/lib/schema'
-import type { JourneyComposition, Travel } from '../../SydneyRealEstateFindings/src/lib/schema'
+import { IndexSchema, PRODUCT_CLASS, RunSchema, travelKey, OFFICE_ORIGIN_ID } from 'sydney-rental-schema'
+import type { JourneyComposition, Travel } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 
 /**

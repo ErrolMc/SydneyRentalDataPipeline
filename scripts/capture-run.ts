@@ -9,7 +9,7 @@ import {
   PlacesSchema,
   SearchesSchema,
   placesByCanonical,
-} from '../../SydneyRealEstateFindings/src/lib/schema'
+} from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from './lib/json-io'
 import { callSearchListings, closeBrowser } from './lib/tools'
 import { planSearchQueries, type SearchQueryGroup } from './lib/searches'
