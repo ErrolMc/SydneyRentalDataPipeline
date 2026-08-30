@@ -128,10 +128,30 @@ function suburbFactor(
     parts.push({ weight: 0.3, score: clamp(profile.census.seifa_irsad_decile * 10) })
   }
 
-  const median = profile.rents?.median_rent_by_beds[String(beds)] ?? null
+  /**
+   * Published figures first, this project's own observations second.
+   *
+   * They are not the same claim and the factor says which it used. `rents` is a
+   * real quarterly series for the whole suburb; `observed_rents` is the median
+   * of what this project happened to capture, which is only listings inside the
+   * travel envelope and under the price cap. Against that sample the question
+   * shifts from "is this cheap for the suburb" to "is this cheap for the
+   * listings we would actually consider" — a weaker claim, still worth scoring,
+   * and one a reader is entitled to discount, which is what `source` is for.
+   *
+   * Preference order rather than an average: mixing a published median with a
+   * self-sampled one would produce a number that is neither, and no honest
+   * label for it.
+   */
+  const published = profile.rents?.median_rent_by_beds[String(beds)] ?? null
+  const observed = profile.observed_rents?.median_pw_by_beds[String(beds)] ?? null
+  const median = published ?? observed
+  let rentSource: string | null = null
+
   if (median != null && median > 0 && pricePerWeek != null) {
     const gap = (pricePerWeek - median) / median
     parts.push({ weight: 0.3, score: piecewise(RENT_VALUE_CURVE)(gap) })
+    rentSource = published != null ? 'rents:published' : 'rents:observed'
   }
 
   if (parts.length === 0) return sitOut(null, 'incomplete_suburb_profile')
@@ -141,7 +161,13 @@ function suburbFactor(
   const bonus = criteria.search.preferred_suburbs.includes(suburbKey) ? 8 : 0
 
   // `raw` carries the pre-bonus composition, so the UI can show where the +8 came from.
-  return { raw: round(base, 1), score: round(clamp(base + bonus), 0) }
+  // `source` is set only when the rent component actually contributed — on a
+  // profile scored from crime and SEIFA alone there is no rent input to name.
+  return {
+    raw: round(base, 1),
+    score: round(clamp(base + bonus), 0),
+    ...(rentSource ? { source: rentSource } : {}),
+  }
 }
 
 // ── §8.4 composite, nulls, dealbreakers ──────────────────────────────────────

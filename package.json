@@ -29,6 +29,7 @@
     "check:walk": "node dist/cli.js check walk",
     "check:ledger": "node dist/cli.js check ledger",
     "check:suburbs": "node dist/cli.js check suburbs",
+    "check:cache": "node dist/cli.js check cache",
     "check:searches": "node dist/cli.js check searches",
     "audit:capture": "node dist/cli.js audit capture",
     "audit:postcodes": "node dist/cli.js audit postcodes",

@@ -41,7 +41,13 @@ import {
 } from '../lib/rea.js'
 import { unenrichedBlock } from '../lib/score.js'
 import { evaluateSearches, planSearchQueries, type SearchCandidate } from '../lib/searches.js'
-import { centroidCorrections, placeSuburb, placesBySuburbKey, stubSuburb } from '../lib/suburbs.js'
+import {
+  centroidCorrections,
+  observedRents,
+  placeSuburb,
+  placesBySuburbKey,
+  stubSuburb,
+} from '../lib/suburbs.js'
 import { allocateRunId, resolveTransitDeparture } from '../lib/sydney.js'
 
 /**
@@ -331,6 +337,29 @@ export async function main(argv: string[]): Promise<void> {
 
     console.log(`    + suburb ${key} @ ${placed.centroid.lat}, ${placed.centroid.lon} (${placed.source})`)
     nextSuburbs[key] = stubSuburb(listings[0].suburb, listings[0].postcode, placed.centroid)
+  }
+
+  /**
+   * What this run saw asked, per suburb — the one part of a profile that costs
+   * nothing to fill, because the prices are already in hand.
+   *
+   * Runs over every suburb in the capture, not just the new ones: an existing
+   * profile wants this run's prices, not the prices of whenever it was created.
+   * A suburb the capture did not reach keeps what it had, stamped with the run
+   * that measured it, which is how a reader tells a current median from one
+   * left over from three runs ago.
+   */
+  let observedFilled = 0
+  for (const [key, listings] of bySuburb) {
+    const profile = nextSuburbs[key]
+    if (!profile) continue
+    const observed = observedRents(listings, runId, createdAt)
+    if (!observed) continue
+    nextSuburbs[key] = { ...profile, observed_rents: observed }
+    observedFilled += 1
+  }
+  if (observedFilled > 0) {
+    console.log(`\n  observed rents for ${observedFilled} suburb(s) (own listings, not published figures)`)
   }
 
   if (unplaceableSuburbs.length > 0) {

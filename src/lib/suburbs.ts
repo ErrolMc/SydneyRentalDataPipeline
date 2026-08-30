@@ -95,6 +95,7 @@ export function stubSuburb(name: string, postcode: string, centroid: Centroid): 
     // then the suburb scoring factor excludes itself rather than guessing.
     commute_baseline: null,
     rents: null,
+    observed_rents: null,
     bonds: null,
     crime: null,
     census: null,
@@ -132,4 +133,81 @@ export function centroidCorrections(
     corrections.push({ key, from: profile.centroid, to: place.centroid, metres })
   }
   return corrections.sort((a, b) => b.metres - a.metres)
+}
+
+
+/**
+ * A bucket smaller than this is not reported at all.
+ *
+ * Five is chosen from the data rather than from taste: across the 265 listings
+ * of run 2026-08-25a there are 54 suburb-and-bedroom buckets, and a cut at five
+ * keeps 19 of them covering 194 listings. Three would keep 31 buckets but a
+ * median of three advertised prices is an anecdote; ten would keep eight and
+ * answer almost nothing. The number travels with the data as `min_sample` so a
+ * reader never has to know this comment exists.
+ */
+export const OBSERVED_RENT_MIN_SAMPLE = 5
+
+export interface ObservedRents {
+  computed_at: string
+  run: string
+  median_pw_by_beds: Record<string, number>
+  sample_by_beds: Record<string, number>
+  considered: number
+  min_sample: number
+}
+
+/** Middle value, or the mean of the middle two. Rounded, because rents are whole dollars. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  const raw = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+  return Math.round(raw)
+}
+
+/**
+ * What this project has actually seen asked for a suburb, by bedroom count.
+ *
+ * Free, in the sense that costs this project money: it reads prices already in
+ * hand rather than buying a statistic. That is also its limit. The sample is
+ * whatever the run captured, which is only listings inside the travel envelope
+ * and under the price cap, so this is the median of *what would be considered*
+ * and not the median of the suburb. `sample_by_beds` is written beside every
+ * median for that reason, and `min_sample` keeps the smallest buckets out
+ * entirely rather than letting three listings look like a market.
+ *
+ * Returns null when nothing clears the threshold, which is the honest answer
+ * for a suburb the run barely touched, and keeps `suburbFactor` sitting the
+ * rent component out rather than scoring against noise.
+ */
+export function observedRents(
+  listings: readonly RawListing[],
+  runId: string,
+  computedAt: string,
+  minSample: number = OBSERVED_RENT_MIN_SAMPLE,
+): ObservedRents | null {
+  const byBeds = new Map<number, number[]>()
+  let considered = 0
+
+  for (const listing of listings) {
+    // A listing with no advertised price says nothing about what the suburb
+    // asks. "Contact agent" is not a number, and treating it as one is how a
+    // median quietly drifts cheap.
+    if (listing.price_pw === null || listing.price_pw <= 0) continue
+    considered += 1
+    byBeds.set(listing.beds, [...(byBeds.get(listing.beds) ?? []), listing.price_pw])
+  }
+
+  const median_pw_by_beds: Record<string, number> = {}
+  const sample_by_beds: Record<string, number> = {}
+
+  for (const [beds, prices] of [...byBeds].sort(([a], [b]) => a - b)) {
+    if (prices.length < minSample) continue
+    median_pw_by_beds[String(beds)] = median(prices)
+    sample_by_beds[String(beds)] = prices.length
+  }
+
+  if (Object.keys(median_pw_by_beds).length === 0) return null
+
+  return { computed_at: computedAt, run: runId, median_pw_by_beds, sample_by_beds, considered, min_sample: minSample }
 }

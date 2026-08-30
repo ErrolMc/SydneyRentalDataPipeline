@@ -8,12 +8,15 @@ import process from 'node:process'
 import {
   CriteriaSchema,
   FACTOR_KEYS,
+  GOOGLE_GEO_TTL_DAYS,
   IndexSchema,
   LedgerSchema,
+  McpCacheSchema,
   RunSchema,
   SearchesSchema,
   SiteConfigSchema,
   SuburbsSchema,
+  cacheExpiry,
   type Run,
 } from 'sydney-rental-schema'
 import { DATA_DIR, PUBLIC_DIR, dataPath, readJsonFile } from '../lib/json-io.js'
@@ -357,10 +360,54 @@ async function validate(): Promise<void> {
     }
   }
 
+  await checkRouteCache()
   await checkLocalMirror()
   await checkRemotePhotos()
 
   report()
+}
+
+/**
+ * What the committed route cache holds, and how much of it is about to stop
+ * being usable.
+ *
+ * Nothing here can fail a commit. An expired position is re-geocoded rather
+ * than served — `geoExpired` in the pipeline's `distance.ts` sees to that — so
+ * this is a cost signal, not a correctness one: every expiring entry is one the
+ * next run pays Google for again. It is reported because a cache is the one
+ * committed file whose contents nobody opens, and because until this existed
+ * the file had no schema and the gate never looked at it at all.
+ */
+async function checkRouteCache(): Promise<void> {
+  const cache = await readJsonFile(dataPath('cache', 'mcp-cache.json'), McpCacheSchema).catch(() => null)
+
+  if (!cache) {
+    // Absent is not an error. `.env` may point the cache at a home directory,
+    // which is the default and a perfectly good place for it.
+    return
+  }
+
+  const routes = Object.keys(cache.routes).length
+  const positions = Object.keys(cache.geo).length
+  const expiry = cacheExpiry(cache, Date.now())
+
+  console.log(
+    `  cache       ${routes} route(s), ${positions} position(s)` +
+      `${expiry.google ? ` — ${expiry.google} from Google` : ''}`,
+  )
+
+  if (expiry.expired > 0) {
+    warn(
+      `${expiry.expired} cached position(s) are past Google's ${GOOGLE_GEO_TTL_DAYS}-day caching limit — ` +
+        'they will be re-geocoded, and paid for, on the next run',
+    )
+  }
+  if (expiry.expiringSoon > 0) {
+    warn(
+      `${expiry.expiringSoon} cached position(s) expire within a week — ` +
+        'budget for re-geocoding them if a run is planned',
+    )
+  }
 }
 
 /**

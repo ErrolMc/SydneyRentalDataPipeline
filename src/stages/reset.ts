@@ -5,7 +5,8 @@ import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 
-import { dataPath, isoNow, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
+import { McpCacheSchema } from 'sydney-rental-schema'
+import { dataPath, isoNow, readJsonFile, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
 import { fail } from '../lib/stage-error.js'
 import { deleteObject, listObjects, r2ConfigFromEnv } from '../lib/r2.js'
 
@@ -26,7 +27,7 @@ import { deleteObject, listObjects, r2ConfigFromEnv } from '../lib/r2.js'
  *         from the ledger, so orphans from failed runs go too
  *   GONE  the local photo mirror
  *   GONE  data/runs/*, data/index.json
- *   RESET data/knowledge/*.json back to empty
+ *   RESET data/knowledge/*.json and data/cache/mcp-cache.json back to empty
  *   KEPT  data/config/* — criteria, site and searches are what you *want*,
  *         not what you found, and re-typing them is how mistakes happen
  *   KEPT  git history and tags. Runs stay recoverable at the commits that made
@@ -102,6 +103,13 @@ export async function main(argv: string[]): Promise<void> {
   }
   console.log(`  runs        ${runs.length}${runs.length ? `: ${runs.join(', ')}` : ''}`)
 
+  // Read before anything is destroyed, so the dry run can say what a real one
+  // would cost. A route and a geocode are both money already spent.
+  const cached = await readJsonFile(dataPath('cache', 'mcp-cache.json'), McpCacheSchema).catch(() => null)
+  const routeCount = cached ? Object.keys(cached.routes).length : 0
+  const geoCount = cached ? Object.keys(cached.geo).length : 0
+  console.log(`  cache       ${routeCount} route(s), ${geoCount} position(s) — re-measuring these costs real money`)
+
   if (!CONFIRM) {
     console.log(
       '\n  Nothing was destroyed. Re-run with --confirm to go ahead.\n' +
@@ -161,7 +169,30 @@ export async function main(argv: string[]): Promise<void> {
     updated_at: now,
     suburbs: {},
   })
+
+  /**
+   * The route cache, which this stage did not reach until now.
+   *
+   * That gap is the whole reason `docs/adr/0002` was blocked: a reset that
+   * leaves the cache full means the very next capture re-serves days-old routes
+   * and geocodes as though it had just measured them, which is the one failure
+   * this project cannot see from the outside — the numbers look fine. It has
+   * never bitten only because the committed cache has been empty since it was
+   * committed, so there was nothing stale to serve. After the first real run
+   * there will be.
+   *
+   * Emptied rather than deleted: `.env` points at this path, and a missing file
+   * is a cache that silently starts working again from `~/.realestate-mcp/`.
+   */
+  await writeJsonFile(dataPath('cache', 'mcp-cache.json'), {
+    schema_version: 1,
+    updated_at: now,
+    routes: {},
+    geo: {},
+  })
+
   console.log(`  emptied     data/knowledge/listings.json, suburbs.json`)
+  console.log(`  emptied     data/cache/mcp-cache.json (${routeCount} route(s), ${geoCount} position(s))`)
 
   console.log('\n  Done. Next: npm run validate:data (expect one "no runs yet" warning),')
   console.log('  then capture and build the first run.\n')

@@ -9,7 +9,9 @@ import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import type { RawListing } from '../src/lib/raw.js'
 import {
   CENTROID_SAME_WITHIN_M,
+  OBSERVED_RENT_MIN_SAMPLE,
   centroidCorrections,
+  observedRents,
   placeSuburb,
   placesBySuburbKey,
   stubSuburb,
@@ -40,6 +42,8 @@ test('suburbs', async (t) => {
    * and becomes a confident wrong commute. Cheaper to settle before that stage
    * exists than after it has quoted numbers.
    */
+
+  const AT = '2026-09-01T00:00:00Z'
 
   const place = (name: string, postcode: string, lat: number, lon: number): Place => ({
     canonical: `${name} NSW ${postcode}`,
@@ -150,6 +154,50 @@ test('suburbs', async (t) => {
     // the point of the tolerance is rounding, not a quiet drift budget.
     const justOver = centroidCorrections({ 'marrickville-2204': profile(-33.90003, 151.15) }, byKey)
     check('a real disagreement above the tolerance is not swallowed', justOver.length === 1)
+  }
+
+  /* --- observed rents -------------------------------------------------------- */
+
+  console.log('\nobservedRents\n')
+  {
+    const priced = (beds: number, ...prices: Array<number | null>): RawListing[] =>
+      prices.map((price_pw) => listing({ beds, price_pw }))
+
+    // Five two-bedders at 700, 750, 800, 850, 900 - median 800.
+    const five = observedRents(priced(2, 700, 750, 900, 850, 800), '2026-09-01a', AT)
+    check('a bucket at the threshold is reported', five?.median_pw_by_beds['2'] === 800, String(five?.median_pw_by_beds['2']))
+    check('and the sample size travels with it', five?.sample_by_beds['2'] === 5)
+    check('and it records which run measured it', five?.run === '2026-09-01a')
+
+    // Four is one short. Reported anyway, a median of four asking prices would
+    // look exactly like a market rate and is not one.
+    const four = observedRents(priced(2, 700, 750, 800, 850), '2026-09-01a', AT)
+    check(`a bucket under ${OBSERVED_RENT_MIN_SAMPLE} is not reported at all`, four === null)
+
+    // An even count takes the mean of the middle two, rounded - rents are whole dollars.
+    const six = observedRents(priced(1, 500, 520, 540, 561, 580, 600), '2026-09-01a', AT)
+    check('an even sample takes the middle two, rounded', six?.median_pw_by_beds['1'] === 551, String(six?.median_pw_by_beds['1']))
+
+    // "Contact agent" is not a number. Counting it as one drags a median cheap.
+    const unpriced = observedRents(
+      [...priced(2, 700, 750, 800, 850, 900), ...priced(2, null, null)],
+      '2026-09-01a',
+      AT,
+    )
+    check('an unpriced listing is not counted', unpriced?.sample_by_beds['2'] === 5)
+    check('and considered counts only the priced ones', unpriced?.considered === 5)
+
+    // Bedroom counts do not pool. A studio and a three-bedder are different markets.
+    const mixed = observedRents(
+      [...priced(1, 500, 520, 540, 560, 580), ...priced(3, 1200, 1300)],
+      '2026-09-01a',
+      AT,
+    )
+    check('beds are bucketed separately', Object.keys(mixed?.median_pw_by_beds ?? {}).join(',') === '1')
+    check('and a bucket that misses the threshold leaves no trace', mixed?.sample_by_beds['3'] === undefined)
+    check('while considered still counts every priced listing seen', mixed?.considered === 7)
+
+    check('nothing priced means no claim', observedRents(priced(2, null), '2026-09-01a', AT) === null)
   }
 
   /* --- what is actually committed ------------------------------------------- */

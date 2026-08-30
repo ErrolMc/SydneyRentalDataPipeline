@@ -305,11 +305,36 @@ function loadCache(): CacheShape {
   return cache;
 }
 
+/**
+ * Sorted keys and two-space indent, which is not tidiness.
+ *
+ * This file is committed (see the findings repo's `data/cache/`), so every run
+ * that touches it puts a diff in a commit that is supposed to contain the run
+ * and nothing else. Written as one long line it is a single unreadable changed
+ * line of a few hundred kilobytes; written a key per line and sorted, adding
+ * 400 routes shows up as 400 added lines and a reviewer can see what was
+ * bought. Sorting also makes the file deterministic — the same cache written
+ * twice is byte-identical, whatever order the lookups happened in.
+ *
+ * Cost is nil in practice: `flushCache` runs at four batch boundaries, not per
+ * lookup.
+ */
+function sortedForDisk(value: CacheShape): unknown {
+  const sortRecord = <T,>(record: Record<string, T>): Record<string, T> =>
+    Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  return {
+    schema_version: 1,
+    updated_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    routes: sortRecord(value.routes),
+    geo: sortRecord(value.geo),
+  };
+}
+
 function flushCache(): void {
   if (!cacheDirty || !cache) return;
   try {
     mkdirSync(dirname(CACHE_PATH), { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify(cache), "utf8");
+    writeFileSync(CACHE_PATH, JSON.stringify(sortedForDisk(cache), null, 2) + "\n", "utf8");
     cacheDirty = false;
   } catch {
     /* an unpersistable cache is still a valid in-memory cache */

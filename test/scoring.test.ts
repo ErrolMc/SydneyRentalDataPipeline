@@ -4,7 +4,12 @@ import assert from 'node:assert/strict'
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
 import '../src/env.js'
 
-import { CriteriaSchema, OFFICE_ORIGIN_ID, type Travel } from 'sydney-rental-schema'
+import {
+  CriteriaSchema,
+  OFFICE_ORIGIN_ID,
+  type SuburbProfile,
+  type Travel,
+} from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import {
   commuteFromTravel,
@@ -79,6 +84,75 @@ test('scoring', async (t) => {
   check('suburb excluded as no_suburb_profile', withArea.factors.suburb.excluded, 'no_suburb_profile')
   check('composite = (25*75 + 12*70 + 2*0)/39', withArea.composite, Number(((25 * 75 + 12 * 70) / 39).toFixed(1)))
   check('no dealbreakers', withArea.dealbreakers, [])
+
+  console.log('\nscoreListing — the suburb factor\'s rent value, published vs observed')
+  {
+    const profile = (over: Partial<SuburbProfile> = {}): SuburbProfile => ({
+      name: 'Marrickville',
+      postcode: '2204',
+      sal_code: null,
+      centroid: { lat: -33.9, lon: 151.15 },
+      commute_baseline: null,
+      rents: null,
+      observed_rents: null,
+      bonds: null,
+      crime: null,
+      census: null,
+      percentiles: null,
+      agent_notes: '',
+      ...over,
+    })
+
+    const observed = {
+      computed_at: '2026-09-01T00:00:00Z',
+      run: '2026-09-01a',
+      median_pw_by_beds: { '2': 800 },
+      sample_by_beds: { '2': 9 },
+      considered: 12,
+      min_sample: 5,
+    }
+    const published = {
+      source: 'NSW Fair Trading',
+      quarter: '2026-Q2',
+      median_rent_by_beds: { '2': 900 },
+      annual_change_pct: 4.1,
+    }
+
+    // Nothing to compare against: the factor sits out rather than scoring the
+    // listing down for a gap in our own data collection.
+    const bare = scoreListing({ ...base, price_pw: 700, area_sqm: 80, suburb_profile: profile() }, criteria)
+    check('an empty profile still excludes the factor', bare.factors.suburb.excluded, 'incomplete_suburb_profile')
+    check('and names no source', bare.factors.suburb.source, undefined)
+
+    // Our own median turns it on, and the factor says so — the claim is weaker
+    // than a published series and a reader is entitled to discount it.
+    const own = scoreListing(
+      { ...base, price_pw: 700, area_sqm: 80, suburb_profile: profile({ observed_rents: observed }) },
+      criteria,
+    )
+    check('observed medians turn the factor on', own.factors.suburb.score !== null, true)
+    check('and it says the number is ours, not published', own.factors.suburb.source, 'rents:observed')
+    check('700 against an observed 800 scores well', own.factors.suburb.score !== null && own.factors.suburb.score > 60, true)
+
+    // Published wins outright. Averaging the two would produce a number that is
+    // neither, with no honest label for it.
+    const both = scoreListing(
+      { ...base, price_pw: 700, area_sqm: 80, suburb_profile: profile({ rents: published, observed_rents: observed }) },
+      criteria,
+    )
+    check('published figures beat our own', both.factors.suburb.source, 'rents:published')
+    check('and the score is the published comparison, not a blend', both.factors.suburb.raw !== own.factors.suburb.raw, true)
+
+    // A bedroom count our sample never covered is not a number.
+    const wrongBeds = scoreListing(
+      { ...base, beds: 3, price_pw: 700, area_sqm: 80, suburb_profile: profile({ observed_rents: observed }) },
+      criteria,
+    )
+    check('a bed count with no median leaves the factor out', wrongBeds.factors.suburb.excluded, 'incomplete_suburb_profile')
+
+    // Turning the factor on is worth 10 of 100 weight, which is the whole point.
+    check('confidence rises by the suburb weight', own.confidence > bare.confidence, true)
+  }
 
   const noArea = scoreListing({ ...base, price_pw: 700, area_sqm: null }, criteria)
   check('confidence without sqm = (25+2)/100', noArea.confidence, 0.27)

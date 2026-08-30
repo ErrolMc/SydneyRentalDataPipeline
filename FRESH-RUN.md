@@ -155,9 +155,13 @@ git history. The R2 deletion is **the only irreversible part of the whole projec
 now marked **deferred**. Two of its premises have moved:
 
 - Its blocker was that the reset does not reach the route cache, so a post-reset capture would
-  re-serve days-old numbers. **That is resolved**: `.env` points the cache at the findings
-  repo's committed `data/knowledge/mcp-cache.json`, which is genuinely empty (0 routes, 0 geo).
-  A fresh capture will route from scratch — which is also why it will cost real money; see §6.
+  re-serve days-old numbers. **That is resolved**, and properly now: `reset` empties the cache
+  alongside the ledger and the profiles. Until 2026-08-30 it did not — the doc comment claimed
+  `data/knowledge/*.json` and the code wrote two of the three files — and the gap was invisible
+  only because the committed cache had been empty since the day it was committed. The cache has
+  also moved to `data/cache/mcp-cache.json`, has a schema, and is reported by `validate`.
+  It is still empty (0 routes, 0 geo), so a fresh capture will route from scratch — which is
+  also why it will cost real money; see §6.
 - Its argument *against* a reset was that absence resolution has never fired against real data
   and a reset returns the project to run #1. Still true: `gone` is empty in both captures. A
   fresh run on top is the only way to exercise it.
@@ -296,6 +300,11 @@ whether it *reads* well.
 ## 8. Done means
 
 - [ ] §3.1 fixed: `build` refuses a capture whose transit arrive-by is not the one it computed.
+- [x] Suburb centroids have one source — the envelope (`15af160`).
+- [x] `reset` empties the route cache; the cache has a home, a schema and a `validate` report.
+- [x] `suburbs.json` carries `observed_rents`, so the suburb factor scores instead of sitting
+      out — on this project's own listings, labelled `rents:observed`, until published NSW
+      figures fill `rents` and take precedence.
 - [ ] A fresh run answering **both** searches on criteria v6 / searches v8, over a deliberate
       and stated share of the 398-location envelope.
 - [ ] Its absence gate actually fired, with verdicts Errol read and agreed with.
