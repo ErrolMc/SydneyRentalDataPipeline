@@ -1,5 +1,5 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import { writeFile } from 'node:fs/promises'
 import process from 'node:process'
@@ -10,9 +10,10 @@ import {
   SearchesSchema,
   placesByCanonical,
 } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
-import { callSearchListings, closeBrowser } from './lib/tools'
-import { planSearchQueries, type SearchQueryGroup } from './lib/searches'
+import { dataPath, readJsonFile } from '../lib/json-io.js'
+import { callSearchListings, closeBrowser } from '../lib/tools.js'
+import { planSearchQueries, type SearchQueryGroup } from '../lib/searches.js'
+import { fail, failAfterReport } from '../lib/stage-error.js'
 
 /**
  * Run the planned query passes against the realestate MCP server and write a
@@ -49,8 +50,11 @@ const BLOCK_BACKOFF_MS = 20_000
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** This stage's own argv, set by `main`. `arg` is used from a dozen places. */
+let ARGV: string[] = []
+
 function arg(name: string): string | undefined {
-  const hit = process.argv.slice(2).find((a) => a.startsWith(`--${name}=`))
+  const hit = ARGV.find((a) => a.startsWith(`--${name}=`))
   return hit?.slice(name.length + 3)
 }
 
@@ -160,6 +164,8 @@ async function fetchLocation(
   maxPages: number,
   criteriaSearch: { max_price_pw: number; min_beds: number; min_baths: number },
   accumulator: ReportAccumulator,
+  /** The run's `transit_departure_resolved`; null for road modes, which must not carry a clock. */
+  arriveBy: string | null,
 ): Promise<PageOutcome> {
   const listings: Array<Record<string, unknown>> = []
   const filtered: Array<Record<string, unknown>> = []
@@ -212,171 +218,182 @@ async function fetchLocation(
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-const out = arg('out')
-if (!out) {
-  console.error('usage: npm run capture:run -- --out=<path> [--core=<loc>,<loc>] [--probe-pages=1]')
-  process.exit(1)
-}
-const core = new Set((arg('core') ?? '').split(',').map((s) => s.trim()).filter(Boolean))
-const probePages = Number(arg('probe-pages') ?? 1)
-/** Transit only: the run's `transit_departure_resolved`. Refused rather than invented. */
-const arriveBy = arg('arrive-by') ?? null
-/** Restrict the pass to these locations — for a smoke test, or to retry a suburb that failed. */
-const only = new Set((arg('only') ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+export async function main(argv: string[]): Promise<void> {
+  ARGV = argv
 
-const criteria = await readJsonFile(dataPath('config', 'criteria.json'), CriteriaSchema)
-const searches = await readJsonFile(dataPath('config', 'searches.json'), SearchesSchema)
-// A rule-based `locations` resolves against places.json. Passing no places does
-// not fall back to the envelope: every rule search is refused, because a missing
-// measurement is never guessed at.
-const places = placesByCanonical(
-  await readJsonFile(dataPath('config', 'places.json'), PlacesSchema),
-)
-
-/**
- * Which searches this run covers. Omitted means all of them — a search has no
- * on/off flag, because "am I asking this today" is a property of the run, not of
- * the question. See `planSearchQueries`.
- *
- *   npm run capture:run -- --searches=train-25
- */
-const onlySearches = arg('searches')
-  ?.split(',')
-  .map((id) => id.trim())
-  .filter(Boolean)
-
-const plan = planSearchQueries(searches, criteria, places, onlySearches)
-if (plan.problems.length > 0) {
-  for (const problem of plan.problems) console.error(`refused ${problem.searchId}: ${problem.reason}`)
-  process.exit(1)
-}
-if (plan.groups.length === 0) {
-  console.error('no searches to run')
-  process.exit(1)
-}
-
-// A transit minute means nothing without the moment it was measured at, and the
-// server refuses rather than measuring against whatever timetable is running now.
-const needsClock = plan.groups.filter((g) => g.needsArriveBy)
-if (needsClock.length > 0 && !arriveBy) {
-  console.error(
-    `--arrive-by is required for ${needsClock.map((g) => g.key).join(', ')} ` +
-      `(pass the run's transit_departure_resolved, e.g. 2026-08-25T09:00:00+10:00)`,
-  )
-  process.exit(1)
-}
-
-const unknownCore = [...core].filter((c) => !criteria.search.locations.includes(c))
-if (unknownCore.length > 0) {
-  console.error(`--core names locations outside the envelope: ${unknownCore.join(', ')}`)
-  process.exit(1)
-}
-
-console.log(`\ncapture → ${out}`)
-console.log(`groups: ${plan.groups.map((g) => `${g.key} ≤${g.maxTravelMinutes}min`).join(', ')}`)
-console.log(`core (paged to exhaustion): ${core.size} · probe pages elsewhere: ${probePages}\n`)
-
-const capturedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
-const groups: unknown[] = []
-const searchedLocations = new Set<string>()
-let grandTotal = 0
-
-try {
-  for (const group of plan.groups) {
-    const accumulator = new ReportAccumulator()
-    const results: Array<Record<string, unknown>> = []
-    const filtered: Array<Record<string, unknown>> = []
-    console.log(`── ${group.key} (≤${group.maxTravelMinutes} min) ─────────────────`)
-
-    const locations = only.size > 0 ? group.locations.filter((l) => only.has(l)) : group.locations
-    for (const location of locations) {
-      const exhaustive = core.has(location)
-      const maxPages = exhaustive ? PAGE_CAP : probePages
-      let outcome: PageOutcome
-      try {
-        outcome = await fetchLocation(group, location, maxPages, criteria.search, accumulator)
-      } catch (error) {
-        // One bad location must not cost the whole pass; it is simply not
-        // recorded as searched, which is what `partial_coverage` is for.
-        console.log(`  ${location.padEnd(26)} FAILED — ${(error as Error).message.slice(0, 120)}`)
-        continue
-      }
-
-      searchedLocations.add(location)
-      results.push(...outcome.listings)
-      filtered.push(...outcome.filtered)
-      grandTotal += outcome.kept
-
-      const shortfall =
-        exhaustive && outcome.totalPages > outcome.pagesFetched
-          ? ` !! only ${outcome.pagesFetched}/${outcome.totalPages} pages`
-          : ''
-      console.log(
-        `  ${location.padEnd(26)} ${exhaustive ? 'full' : 'probe'} · ` +
-          `${String(outcome.pagesFetched).padStart(2)}p of ${String(outcome.totalPages).padStart(2)} · ` +
-          `REA ${String(outcome.totalResults).padStart(4)} → kept ${String(outcome.kept).padStart(3)}${shortfall}`,
-      )
-
-      // Write after every location so a crash costs one suburb, not the run.
-      const snapshot = {
-        source: 'rea-mcp',
-        captured_at: capturedAt,
-        commentary: '',
-        searched_locations: [...searchedLocations],
-        gone: {},
-        groups: [
-          ...groups,
-          {
-            origin: group.originId,
-            mode: group.mode,
-            max_travel_minutes: group.maxTravelMinutes,
-            arrive_by: group.needsArriveBy ? arriveBy : null,
-            locations_searched: [...searchedLocations],
-            travel_report: accumulator.build(group.originAddress, group.mode),
-            results,
-            filtered_by_travel: filtered,
-          },
-        ],
-        results: [],
-      }
-      await writeFile(out, JSON.stringify(snapshot, null, 2), 'utf8')
-    }
-
-    groups.push({
-      origin: group.originId,
-      mode: group.mode,
-      max_travel_minutes: group.maxTravelMinutes,
-      arrive_by: group.needsArriveBy ? arriveBy : null,
-      locations_searched: [...searchedLocations],
-      travel_report: accumulator.build(group.originAddress, group.mode),
-      results,
-      filtered_by_travel: filtered,
-    })
+  const out = arg('out')
+  if (!out) {
+    console.error('usage: npm run capture:run -- --out=<path> [--core=<loc>,<loc>] [--probe-pages=1]')
+    failAfterReport()
   }
-} finally {
-  await closeBrowser()
+  const core = new Set((arg('core') ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+  const probePages = Number(arg('probe-pages') ?? 1)
+  /** Transit only: the run's `transit_departure_resolved`. Refused rather than invented. */
+  const arriveBy = arg('arrive-by') ?? null
+  /** Restrict the pass to these locations — for a smoke test, or to retry a suburb that failed. */
+  const only = new Set((arg('only') ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+
+  const criteria = await readJsonFile(dataPath('config', 'criteria.json'), CriteriaSchema)
+  const searches = await readJsonFile(dataPath('config', 'searches.json'), SearchesSchema)
+  // A rule-based `locations` resolves against places.json. Passing no places does
+  // not fall back to the envelope: every rule search is refused, because a missing
+  // measurement is never guessed at.
+  const places = placesByCanonical(
+    await readJsonFile(dataPath('config', 'places.json'), PlacesSchema),
+  )
+
+  /**
+   * Which searches this run covers. Omitted means all of them — a search has no
+   * on/off flag, because "am I asking this today" is a property of the run, not of
+   * the question. See `planSearchQueries`.
+   *
+   *   npm run capture:run -- --searches=train-25
+   */
+  const onlySearches = arg('searches')
+    ?.split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+
+  const plan = planSearchQueries(searches, criteria, places, onlySearches)
+  if (plan.problems.length > 0) {
+    for (const problem of plan.problems) console.error(`refused ${problem.searchId}: ${problem.reason}`)
+    failAfterReport()
+  }
+  if (plan.groups.length === 0) {
+    console.error('no searches to run')
+    failAfterReport()
+  }
+
+  // A transit minute means nothing without the moment it was measured at, and the
+  // server refuses rather than measuring against whatever timetable is running now.
+  const needsClock = plan.groups.filter((g) => g.needsArriveBy)
+  if (needsClock.length > 0 && !arriveBy) {
+    console.error(
+      `--arrive-by is required for ${needsClock.map((g) => g.key).join(', ')} ` +
+        `(pass the run's transit_departure_resolved, e.g. 2026-08-25T09:00:00+10:00)`,
+    )
+    failAfterReport()
+  }
+
+  const unknownCore = [...core].filter((c) => !criteria.search.locations.includes(c))
+  if (unknownCore.length > 0) {
+    console.error(`--core names locations outside the envelope: ${unknownCore.join(', ')}`)
+    failAfterReport()
+  }
+
+  console.log(`\ncapture → ${out}`)
+  console.log(`groups: ${plan.groups.map((g) => `${g.key} ≤${g.maxTravelMinutes}min`).join(', ')}`)
+  console.log(`core (paged to exhaustion): ${core.size} · probe pages elsewhere: ${probePages}\n`)
+
+  const capturedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+  const groups: unknown[] = []
+  const searchedLocations = new Set<string>()
+  let grandTotal = 0
+
+  try {
+    for (const group of plan.groups) {
+      const accumulator = new ReportAccumulator()
+      const results: Array<Record<string, unknown>> = []
+      const filtered: Array<Record<string, unknown>> = []
+      console.log(`── ${group.key} (≤${group.maxTravelMinutes} min) ─────────────────`)
+
+      const locations = only.size > 0 ? group.locations.filter((l) => only.has(l)) : group.locations
+      for (const location of locations) {
+        const exhaustive = core.has(location)
+        const maxPages = exhaustive ? PAGE_CAP : probePages
+        let outcome: PageOutcome
+        try {
+          outcome = await fetchLocation(
+            group,
+            location,
+            maxPages,
+            criteria.search,
+            accumulator,
+            arriveBy,
+          )
+        } catch (error) {
+          // One bad location must not cost the whole pass; it is simply not
+          // recorded as searched, which is what `partial_coverage` is for.
+          console.log(`  ${location.padEnd(26)} FAILED — ${(error as Error).message.slice(0, 120)}`)
+          continue
+        }
+
+        searchedLocations.add(location)
+        results.push(...outcome.listings)
+        filtered.push(...outcome.filtered)
+        grandTotal += outcome.kept
+
+        const shortfall =
+          exhaustive && outcome.totalPages > outcome.pagesFetched
+            ? ` !! only ${outcome.pagesFetched}/${outcome.totalPages} pages`
+            : ''
+        console.log(
+          `  ${location.padEnd(26)} ${exhaustive ? 'full' : 'probe'} · ` +
+            `${String(outcome.pagesFetched).padStart(2)}p of ${String(outcome.totalPages).padStart(2)} · ` +
+            `REA ${String(outcome.totalResults).padStart(4)} → kept ${String(outcome.kept).padStart(3)}${shortfall}`,
+        )
+
+        // Write after every location so a crash costs one suburb, not the run.
+        const snapshot = {
+          source: 'rea-mcp',
+          captured_at: capturedAt,
+          commentary: '',
+          searched_locations: [...searchedLocations],
+          gone: {},
+          groups: [
+            ...groups,
+            {
+              origin: group.originId,
+              mode: group.mode,
+              max_travel_minutes: group.maxTravelMinutes,
+              arrive_by: group.needsArriveBy ? arriveBy : null,
+              locations_searched: [...searchedLocations],
+              travel_report: accumulator.build(group.originAddress, group.mode),
+              results,
+              filtered_by_travel: filtered,
+            },
+          ],
+          results: [],
+        }
+        await writeFile(out, JSON.stringify(snapshot, null, 2), 'utf8')
+      }
+
+      groups.push({
+        origin: group.originId,
+        mode: group.mode,
+        max_travel_minutes: group.maxTravelMinutes,
+        arrive_by: group.needsArriveBy ? arriveBy : null,
+        locations_searched: [...searchedLocations],
+        travel_report: accumulator.build(group.originAddress, group.mode),
+        results,
+        filtered_by_travel: filtered,
+      })
+    }
+  } finally {
+    await closeBrowser()
+  }
+
+  const capture = {
+    source: 'rea-mcp',
+    captured_at: capturedAt,
+    commentary: '',
+    // Every envelope location was queried → [] means "all of them". If any
+    // failed, say exactly which were covered so the run cannot claim more.
+    searched_locations:
+      only.size === 0 && searchedLocations.size === criteria.search.locations.length
+        ? []
+        : [...searchedLocations],
+    gone: {},
+    groups,
+    results: [],
+  }
+
+  await writeFile(out, JSON.stringify(capture, null, 2), 'utf8')
+
+  const missing = criteria.search.locations.filter((l) => !searchedLocations.has(l))
+  console.log(`\nwrote ${out}`)
+  console.log(`  ${grandTotal} listing row(s) across ${groups.length} group(s)`)
+  console.log(`  ${searchedLocations.size}/${criteria.search.locations.length} locations searched`)
+  if (missing.length > 0) console.log(`  NOT searched: ${missing.join(', ')}`)
+  console.log(`\nnext: npm run audit:capture -- ${out}\n`)
 }
-
-const capture = {
-  source: 'rea-mcp',
-  captured_at: capturedAt,
-  commentary: '',
-  // Every envelope location was queried → [] means "all of them". If any
-  // failed, say exactly which were covered so the run cannot claim more.
-  searched_locations:
-    only.size === 0 && searchedLocations.size === criteria.search.locations.length
-      ? []
-      : [...searchedLocations],
-  gone: {},
-  groups,
-  results: [],
-}
-
-await writeFile(out, JSON.stringify(capture, null, 2), 'utf8')
-
-const missing = criteria.search.locations.filter((l) => !searchedLocations.has(l))
-console.log(`\nwrote ${out}`)
-console.log(`  ${grandTotal} listing row(s) across ${groups.length} group(s)`)
-console.log(`  ${searchedLocations.size}/${criteria.search.locations.length} locations searched`)
-if (missing.length > 0) console.log(`  NOT searched: ${missing.join(', ')}`)
-console.log(`\nnext: npm run audit:capture -- ${out}\n`)

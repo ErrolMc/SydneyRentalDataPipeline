@@ -2,15 +2,15 @@
 import '../src/env.js'
 
 import { CriteriaSchema, OFFICE_ORIGIN_ID, type Travel } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
+import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import {
   commuteFromTravel,
   commuteMinutes,
   piecewise,
   scoreListing,
   unenrichedBlock,
-} from './lib/score'
-import { allocateRunId, resolveTransitDeparture, sydneyToday } from './lib/sydney'
+} from '../src/lib/score.js'
+import { allocateRunId, resolveTransitDeparture, sydneyToday } from '../src/lib/sydney.js'
 
 const criteria = await readJsonFile(dataPath('config', 'criteria.json'), CriteriaSchema)
 

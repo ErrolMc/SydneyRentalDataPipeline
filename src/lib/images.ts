@@ -3,8 +3,8 @@ import path from 'node:path'
 
 import sharp from 'sharp'
 
-import { PUBLIC_DIR } from './json-io'
-import { objectKeyFor, putObject, type R2Config } from './r2'
+import { PUBLIC_DIR } from './json-io.js'
+import { objectKeyFor, putObject, type R2Config } from './r2.js'
 
 /**
  * The image pipeline (PLAN.md §4 step 8).

@@ -1,4 +1,4 @@
-import { sha256 } from './json-io'
+import { sha256 } from './json-io.js'
 import type { SiteConfig } from 'sydney-rental-schema'
 
 /**

@@ -1,6 +1,6 @@
 import { GONE_STATUSES } from 'sydney-rental-schema'
 import type { LedgerEntry, ListingState, ListingStatus, RejectedEntry } from 'sydney-rental-schema'
-import type { RawListing } from './raw'
+import type { RawListing } from './raw.js'
 
 /**
  * Dedupe and merge against the ledger (PLAN.md §4 step 5).

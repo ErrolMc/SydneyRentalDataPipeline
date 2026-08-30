@@ -15,14 +15,14 @@ import {
   type Search,
   type Searches,
 } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
+import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import {
   evaluateSearches,
   matchesSearch,
   planSearchQueries,
   resolveSearchLocations,
   type SearchCandidate,
-} from './lib/searches'
+} from '../src/lib/searches.js'
 
 /**
  * Self-check for the pure half of the search model (PLAN.md §3.7).

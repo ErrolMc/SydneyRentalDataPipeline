@@ -17,7 +17,7 @@ import { searchListings, SearchListingsInput } from "./lib/search-listings.js";
  * The MCP adapter: what Claude Code talks to. Interactive use only —
  * `search_listings` for ad-hoc questions and `get_listing` for the run
  * protocol's absence-resolution step. The pipeline itself calls the same
- * functions in-process (scripts/lib/tools.ts); `geocode_places` and
+ * functions in-process (src/lib/tools.ts); `geocode_places` and
  * `route_places` were only ever called by it, so they are no longer tools.
  */
 const server = new McpServer({ name: "sydney-rental-data-pipeline", version: "0.1.0" });

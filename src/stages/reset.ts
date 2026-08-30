@@ -1,12 +1,13 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 
-import { dataPath, isoNow, writeJsonFile, PUBLIC_DIR } from './lib/json-io'
-import { deleteObject, listObjects, r2ConfigFromEnv } from './lib/r2'
+import { dataPath, isoNow, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
+import { fail } from '../lib/stage-error.js'
+import { deleteObject, listObjects, r2ConfigFromEnv } from '../lib/r2.js'
 
 /**
  * Throw away every run and every photo, and start over.
@@ -41,12 +42,6 @@ import { deleteObject, listObjects, r2ConfigFromEnv } from './lib/r2'
  * to nothing. Half a reset is worse than none.
  */
 
-const CONFIRM = process.argv.includes('--confirm')
-
-function fail(message: string): never {
-  console.error(`\n✖ ${message}\n`)
-  process.exit(1)
-}
 
 async function dirSize(dir: string): Promise<{ files: number; bytes: number }> {
   let files = 0
@@ -73,7 +68,9 @@ async function dirSize(dir: string): Promise<{ files: number; bytes: number }> {
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
-async function main() {
+export async function main(argv: string[]): Promise<void> {
+  const CONFIRM = argv.includes('--confirm')
+
   console.log(`\nReset${CONFIRM ? '' : '  (dry run — nothing will be destroyed)'}`)
 
   // ── what is there ──────────────────────────────────────────────────────────
@@ -169,5 +166,3 @@ async function main() {
   console.log('\n  Done. Next: npm run validate:data (expect one "no runs yet" warning),')
   console.log('  then capture and build the first run.\n')
 }
-
-main().catch((error) => fail((error as Error).message))

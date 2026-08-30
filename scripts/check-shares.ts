@@ -5,14 +5,14 @@ import { readFileSync } from 'node:fs'
 import process from 'node:process'
 
 import { CriteriaSchema } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
+import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import {
   ReaCaptureSchema,
   excludedByKeyword,
   reaToRawListing,
   roomSignalEvidence,
   type MappingProblem,
-} from './lib/rea'
+} from '../src/lib/rea.js'
 
 /**
  * Read the share-house classifier's working out against a capture.

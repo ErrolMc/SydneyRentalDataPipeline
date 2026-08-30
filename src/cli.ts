@@ -3,35 +3,31 @@
 // See src/env.ts.
 import "./env.js";
 
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { StageError } from "./lib/stage-error.js";
 
 /**
  * The pipeline's one entry point: `node dist/cli.js <command> …`.
  *
- * Every data-producing step is still a script under `scripts/` (moved in from
- * the findings repo in MIGRATION.md Phase 1, unchanged). They run at module
- * scope and read `process.argv` themselves, exactly as `tsx scripts/x.ts …`
- * ran them — so this file does not import them at build time. It sets
- * `process.argv` to what the script expects and imports it through tsx, which
- * compiles the TypeScript on the fly and resolves the scripts' extensionless
- * and cross-repo imports the way `npm run <script>` always has. The npm
- * scripts remain as aliases; this is the same thing with a table of contents.
+ * Every data-producing step is a module under `src/stages/` exporting
+ * `main(argv)`, and this dispatches to it. Until PHASE2.md Step 3 they were
+ * scripts under `scripts/` that ran at module scope and read `process.argv`
+ * themselves, and this file re-launched them through tsx with a spliced argv —
+ * compiling TypeScript on every invocation to run code this package had
+ * already built.
  *
- * `mcp` and `setup` are this package's own code and are imported compiled.
- * `mcp` must be a dynamic import: a static one would connect the server on
- * every invocation.
+ * The imports are dynamic, and deliberately so: a stage's module scope pulls in
+ * what it needs — patchright for `capture`, sharp for `build` — and a static
+ * import would pay for all of it on `--help`.
  *
- * Phase 2 (MIGRATION.md) folds the scripts into `src/lib/` with exported
- * entry points, at which point the tsx hop goes away.
+ * A stage signals failure by throwing (`lib/stage-error.ts`), never by exiting,
+ * so that `run` can compose them and say which one stopped. The printing and
+ * the exit code happen here, in the one place.
  */
 
-const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-
 const ENRICH: Record<string, string> = {
-  walk: "enrich-walkability.ts",
-  travel: "enrich-travel.ts",
-  transit: "enrich-transit.ts",
+  walk: "enrich-walkability",
+  travel: "enrich-travel",
+  transit: "enrich-transit",
 };
 
 const CHECKS: Record<string, string> = {
@@ -48,8 +44,8 @@ const CHECKS: Record<string, string> = {
 const DEFAULT_CHECKS = ["scoring", "walk", "searches", "transit", "ledger"];
 
 const AUDITS: Record<string, string> = {
-  capture: "audit-capture.ts",
-  postcodes: "audit-postcodes.ts",
+  capture: "audit-capture",
+  postcodes: "audit-postcodes",
 };
 
 const USAGE = `sydney-rental-data-pipeline — writes ../SydneyRealEstateFindings/data/
@@ -88,12 +84,23 @@ function usage(exitCode: number, message?: string): never {
   process.exit(exitCode);
 }
 
+/** Run one of the stage modules, with the argv it expects. */
+async function runStage(name: string, argv: string[]): Promise<void> {
+  const stage = (await import(`./stages/${name}.js`)) as {
+    main: (argv: string[]) => Promise<void>;
+  };
+  await stage.main(argv);
+}
+
 /**
- * Run one of the moved scripts in this process, with the argv it expects.
- * The import is scoped to tsx; nothing else in this process is affected.
+ * The seven checks are still scripts, and still run through tsx — PHASE2.md
+ * Step 6 turns them into a `node --test` suite, which is where the tsx
+ * dependency finally goes.
  */
-async function runScript(file: string, rest: string[]): Promise<void> {
-  const script = join(PACKAGE_ROOT, "scripts", file);
+async function runCheck(file: string, rest: string[]): Promise<void> {
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
+  const script = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", file);
   process.argv = [process.argv[0], script, ...rest];
   const { tsImport } = await import("tsx/esm/api");
   await tsImport(pathToFileURL(script).href, import.meta.url);
@@ -106,67 +113,76 @@ function pick(table: Record<string, string>, key: string | undefined, what: stri
 
 const [command, ...rest] = process.argv.slice(2);
 
-switch (command) {
-  case undefined:
-  case "help":
-  case "--help":
-  case "-h":
-    usage(0);
-    break;
+try {
+  switch (command) {
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      usage(0);
+      break;
 
-  case "setup": {
-    const { runSetup } = await import("./setup.js");
-    await runSetup();
-    break;
+    case "setup": {
+      const { runSetup } = await import("./setup.js");
+      await runSetup();
+      break;
+    }
+
+    case "mcp":
+      await import("./mcp.js");
+      break;
+
+    case "capture":
+      await runStage("capture", rest);
+      break;
+
+    case "build":
+      await runStage("build", rest);
+      break;
+
+    case "replay":
+      await runStage("replay", rest);
+      break;
+
+    case "envelope":
+      await runStage("envelope", rest);
+      break;
+
+    case "enrich":
+      await runStage(pick(ENRICH, rest[0], "enrich"), rest.slice(1));
+      break;
+
+    case "check": {
+      const names = rest.length ? [rest[0]] : DEFAULT_CHECKS;
+      // `check shares <capture>` passes the capture on; the rest take nothing.
+      for (const name of names) await runCheck(pick(CHECKS, name, "check"), rest.slice(1));
+      break;
+    }
+
+    case "validate":
+      await runStage("validate", rest);
+      break;
+
+    case "audit":
+      await runStage(pick(AUDITS, rest[0], "audit"), rest.slice(1));
+      break;
+
+    case "reset":
+      await runStage("reset", rest);
+      break;
+
+    case "run":
+      usage(2, "`run` is Phase 2 (MIGRATION.md). For now: capture, then build, then validate.");
+      break;
+
+    default:
+      usage(2, `unknown command "${command}"`);
   }
-
-  case "mcp":
-    await import("./mcp.js");
-    break;
-
-  case "capture":
-    await runScript("capture-run.ts", rest);
-    break;
-
-  case "build":
-    await runScript("build-run.ts", rest);
-    break;
-
-  case "replay":
-    await runScript("replay-run.ts", rest);
-    break;
-
-  case "envelope":
-    await runScript("build-envelope.ts", rest);
-    break;
-
-  case "enrich":
-    await runScript(pick(ENRICH, rest[0], "enrich"), rest.slice(1));
-    break;
-
-  case "check": {
-    const names = rest.length ? [rest[0]] : DEFAULT_CHECKS;
-    // `check shares <capture>` passes the capture on; the rest take nothing.
-    for (const name of names) await runScript(pick(CHECKS, name, "check"), rest.slice(1));
-    break;
+} catch (error) {
+  // A stage that has already printed its own report wants the exit code and
+  // nothing else — `validate` prints a problem list under its own heading.
+  if (!(error instanceof StageError && error.reported)) {
+    console.error(`\n✖ ${(error as Error).message}\n`);
   }
-
-  case "validate":
-    await runScript("validate-data.ts", rest);
-    break;
-
-  case "audit":
-    await runScript(pick(AUDITS, rest[0], "audit"), rest.slice(1));
-    break;
-
-  case "reset":
-    await runScript("reset-data.ts", rest);
-    break;
-
-  case "run":
-    usage(2, "`run` is Phase 2 (MIGRATION.md). For now: capture, then build, then validate.");
-    break;
-
-  default:
-    usage(2, `unknown command "${command}"`);
+  process.exit(1);
 }

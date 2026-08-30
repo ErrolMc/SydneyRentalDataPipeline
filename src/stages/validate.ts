@@ -1,5 +1,5 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import { access, readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -16,8 +16,9 @@ import {
   SuburbsSchema,
   type Run,
 } from 'sydney-rental-schema'
-import { DATA_DIR, PUBLIC_DIR, dataPath, readJsonFile } from './lib/json-io'
-import { objectExists, objectKeyFor, r2ConfigFromEnv } from './lib/r2'
+import { DATA_DIR, PUBLIC_DIR, dataPath, readJsonFile } from '../lib/json-io.js'
+import { objectExists, objectKeyFor, r2ConfigFromEnv } from '../lib/r2.js'
+import { StageError, fail as stop, failAfterReport } from '../lib/stage-error.js'
 
 /**
  * Protocol step 10 (PLAN.md §4): the gate that stands between a run and a
@@ -29,8 +30,8 @@ import { objectExists, objectKeyFor, r2ConfigFromEnv } from './lib/r2'
  * export cannot take the site down. But it should never leave this machine
  * either, which is what this script is for.
  *
- *   npm run validate:data                    → structure + the local mirror
- *   npm run validate:data -- --check-remote  → also HEAD every photo in R2
+ *   node dist/cli.js validate                    → structure + the local mirror
+ *   node dist/cli.js validate --check-remote     → also HEAD every photo in R2
  *
  * Exit 0 clean, exit 1 with a list of problems.
  */
@@ -40,7 +41,7 @@ import { objectExists, objectKeyFor, r2ConfigFromEnv } from './lib/r2'
  * what the site can actually render. `--check-remote` HEADs every distinct
  * photo in the bucket; AGENT.md requires it before a run is committed.
  */
-const CHECK_REMOTE = process.argv.includes('--check-remote')
+let CHECK_REMOTE = false
 const REMOTE_CONCURRENCY = 16
 
 const errors: string[] = []
@@ -103,7 +104,7 @@ async function checkFactorKeys(runId: string): Promise<void> {
   }
 }
 
-async function main() {
+async function validate(): Promise<void> {
   // ── every data file parses ─────────────────────────────────────────────────
   const [site, criteria, searches, index, ledger, suburbs] = await Promise.all([
     readJsonFile(dataPath('config', 'site.json'), SiteConfigSchema).catch((error: Error) => {
@@ -419,23 +420,43 @@ async function checkRemotePhotos(): Promise<void> {
   await Promise.all(workers)
 }
 
-function report(): never {
+function report(): void {
   const scope = path.relative(process.cwd(), DATA_DIR).replace(/\\/g, '/')
 
   for (const message of warnings) console.warn(`  ⚠ ${message}`)
 
   if (errors.length === 0) {
     console.log(`\n✔ ${scope}/ is valid${warnings.length > 0 ? ` (${warnings.length} warning(s))` : ''}\n`)
-    process.exit(0)
+    return
   }
 
   console.error(`\n✖ ${errors.length} problem(s) in ${scope}/ — DO NOT COMMIT\n`)
   for (const message of errors) console.error(`  • ${message}`)
   console.error('')
-  process.exit(1)
+  // The list above is the report; the CLI adds nothing to it.
+  failAfterReport()
 }
 
-main().catch((error) => {
-  console.error(`\n✖ validate-data crashed: ${(error as Error).message}\n`)
-  process.exit(1)
-})
+/**
+ * `fail` here collects a problem with the data; it never throws. So an actual
+ * throw out of `validate()` is a bug in the validator rather than a verdict on
+ * the data, and has always been reported differently.
+ *
+ * Everything it accumulates is module state, reset on entry: `run` (PHASE2.md
+ * Step 5) makes a second call in one process possible, and a stale `errors`
+ * array would fail a run for problems the previous call already reported.
+ */
+export async function main(argv: string[]): Promise<void> {
+  CHECK_REMOTE = argv.includes('--check-remote')
+  errors.length = 0
+  warnings.length = 0
+  allPhotoPaths.clear()
+  missingLocally.length = 0
+
+  try {
+    await validate()
+  } catch (error) {
+    if (error instanceof StageError) throw error
+    stop(`validate crashed: ${(error as Error).message}`)
+  }
+}

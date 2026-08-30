@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
-import { callGeocodePlaces } from './tools'
+import { callGeocodePlaces } from './tools.js'
 
 /**
  * The `geocode_places` boundary: asking the MCP server where a suburb is.
  *
  * This repo had its own Nominatim client until ADR 0004 — 76 lines in
- * `scripts/lib/geocode.ts`, one request, first result. It has been moved into
+ * the site repo's `scripts/lib/geocode.ts`, one request, first result. It has been moved into
  * the server *verbatim* rather than folded into the geocoder already there,
  * which is an address geocoder and answers a different question: pointed at
  * "Westleigh, NSW 2120" it returns a street inside Westleigh, 1.5 km from the

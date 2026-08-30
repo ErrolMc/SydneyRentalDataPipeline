@@ -4,8 +4,8 @@ import '../src/env.js'
 import process from 'node:process'
 
 import { LedgerSchema } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
-import { mergeRejected, type CapturedRejection } from './lib/ledger'
+import { dataPath, readJsonFile } from '../src/lib/json-io.js'
+import { mergeRejected, type CapturedRejection } from '../src/lib/ledger.js'
 
 /**
  * Prove `mergeRejected` against fixtures, and read the committed ledger back.

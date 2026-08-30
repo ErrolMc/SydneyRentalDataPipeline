@@ -2,7 +2,7 @@
 import '../src/env.js'
 
 import { SiteConfigSchema } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
+import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import {
   cellsFor,
   haversineMetres,
@@ -10,8 +10,8 @@ import {
   walkMinutes,
   type OverpassElement,
   type Poi,
-} from './lib/overpass'
-import { cacheIsFresh, walkabilityFor } from './lib/walkability'
+} from '../src/lib/overpass.js'
+import { cacheIsFresh, walkabilityFor } from '../src/lib/walkability.js'
 
 /**
  * The half of walkability that has no network in it: parsing what Overpass

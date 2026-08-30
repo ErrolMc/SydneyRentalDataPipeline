@@ -1,5 +1,5 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import path from 'node:path'
 import process from 'node:process'
@@ -23,30 +23,31 @@ import {
   type Suburbs,
   placesByCanonical,
 } from 'sydney-rental-schema'
-import { computeConfigHash } from './lib/config-hash'
-import { buildListingEntry, sortListings } from './lib/entry'
-import { geocodeSuburbs, type Centroid } from './lib/geocode-places'
-import { syncListingImages } from './lib/images'
-import { dataPath, isoNow, readJsonFile, sortRecord, writeJsonFile } from './lib/json-io'
-import { markAbsent, mergeListing, mergeRejected } from './lib/ledger'
-import { r2ConfigFromEnv } from './lib/r2'
-import { suburbKey, type RawListing } from './lib/raw'
+import { computeConfigHash } from '../lib/config-hash.js'
+import { buildListingEntry, sortListings } from '../lib/entry.js'
+import { geocodeSuburbs, type Centroid } from '../lib/geocode-places.js'
+import { syncListingImages } from '../lib/images.js'
+import { dataPath, isoNow, readJsonFile, sortRecord, writeJsonFile } from '../lib/json-io.js'
+import { markAbsent, mergeListing, mergeRejected } from '../lib/ledger.js'
+import { fail } from '../lib/stage-error.js'
+import { r2ConfigFromEnv } from '../lib/r2.js'
+import { suburbKey, type RawListing } from '../lib/raw.js'
 import {
   ReaCaptureSchema,
   excludedByKeyword,
   flattenCapture,
   reaToRawListing,
   type MappingProblem,
-} from './lib/rea'
-import { unenrichedBlock } from './lib/score'
-import { evaluateSearches, planSearchQueries, type SearchCandidate } from './lib/searches'
-import { allocateRunId, resolveTransitDeparture } from './lib/sydney'
+} from '../lib/rea.js'
+import { unenrichedBlock } from '../lib/score.js'
+import { evaluateSearches, planSearchQueries, type SearchCandidate } from '../lib/searches.js'
+import { allocateRunId, resolveTransitDeparture } from '../lib/sydney.js'
 
 /**
  * Protocol steps 2, 3, 5, 7, 8 and 9 (PLAN.md §4), driven from a capture file
  * the agent produced in step 4.
  *
- *   npx tsx scripts/build-run.ts <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx]
+ *   node dist/cli.js build <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx]
  *
  * Everything here is deterministic apart from the image downloads and the
  * clock, so re-running the same capture after fixing a bug reproduces the same
@@ -59,9 +60,6 @@ import { allocateRunId, resolveTransitDeparture } from './lib/sydney'
  * than scoring zero.
  */
 
-const DRY_RUN = process.argv.includes('--dry-run')
-const RUN_ID_OVERRIDE = process.argv.find((arg) => arg.startsWith('--run-id='))?.slice(9)
-const LOCAL_IMAGES = process.argv.includes('--local-images')
 /**
  * Photos kept per listing. One by default, because `image_urls` arrives
  * hero-first — photo 01 is the lead shot the listing agent chose — and the
@@ -72,13 +70,7 @@ const LOCAL_IMAGES = process.argv.includes('--local-images')
  * eighths of them to be unreachable. Filenames are append-only, so raising
  * this later adds photos rather than renumbering what older runs point at.
  */
-const PHOTOS_PER_LISTING = Number(process.argv.find((a) => a.startsWith('--photos='))?.slice(9) ?? 1)
-const CAPTURE_PATH = process.argv[2]
-
-function fail(message: string): never {
-  console.error(`\n✖ ${message}\n`)
-  process.exit(1)
-}
+const DEFAULT_PHOTOS_PER_LISTING = 1
 
 function centroidOf(listings: RawListing[]): { lat: number; lon: number } | null {
   const located = listings.filter((listing) => listing.lat !== null && listing.lon !== null)
@@ -94,7 +86,7 @@ function stubSuburb(name: string, postcode: string, centroid: { lat: number; lon
     postcode,
     sal_code: null,
     centroid,
-    // Everything below is filled in by scripts/build-suburbs.ts (M6). Until
+    // Everything below is filled in by a build-suburbs stage (M6). Until
     // then the suburb scoring factor excludes itself rather than guessing.
     commute_baseline: null,
     rents: null,
@@ -106,11 +98,17 @@ function stubSuburb(name: string, postcode: string, centroid: { lat: number; lon
   }
 }
 
-async function main() {
+export async function main(argv: string[]): Promise<void> {
+  const DRY_RUN = argv.includes('--dry-run')
+  const RUN_ID_OVERRIDE = argv.find((arg) => arg.startsWith('--run-id='))?.slice(9)
+  const LOCAL_IMAGES = argv.includes('--local-images')
+  const PHOTOS_PER_LISTING = Number(
+    argv.find((a) => a.startsWith('--photos='))?.slice(9) ?? DEFAULT_PHOTOS_PER_LISTING,
+  )
+  const CAPTURE_PATH = argv[0]
+
   if (!CAPTURE_PATH) {
-    fail(
-      'usage: npx tsx scripts/build-run.ts <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx] [--local-images]',
-    )
+    fail('usage: node dist/cli.js build <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx] [--local-images]')
   }
 
   // ── step 2: load ───────────────────────────────────────────────────────────
@@ -595,5 +593,3 @@ async function main() {
 
   console.log('\n  Next: npm run validate:data, then commit per §4 step 11.\n')
 }
-
-main().catch((error) => fail((error as Error).message))

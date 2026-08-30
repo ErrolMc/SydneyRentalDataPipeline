@@ -12,7 +12,7 @@ import {
   publicUrlFor,
   putObject,
   r2ConfigFromEnv,
-} from './lib/r2'
+} from '../src/lib/r2.js'
 
 /**
  * One-time R2 setup check: `npm run check:r2`.

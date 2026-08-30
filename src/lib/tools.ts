@@ -1,12 +1,12 @@
 // Must stay first: browser.ts and distance.ts read process.env at import time.
-import '../../src/env.js'
+import '../env.js'
 
 import { z } from 'zod'
 
-import { closeContext } from '../../src/browser.js'
-import { geocodePlaces, routePlaces } from '../../src/distance.js'
-import { searchListings } from '../../src/lib/search-listings.js'
-import { suggestLocations } from '../../src/search.js'
+import { closeContext } from '../browser.js'
+import { geocodePlaces, routePlaces } from '../distance.js'
+import { searchListings } from './search-listings.js'
+import { suggestLocations } from '../search.js'
 
 /**
  * The four calls the scripts used to make to the MCP server, in-process.

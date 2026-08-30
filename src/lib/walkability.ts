@@ -1,5 +1,5 @@
 import type { LedgerEntry, SiteConfig } from 'sydney-rental-schema'
-import { haversineMetres, walkMinutes, type Poi, type Point } from './overpass'
+import { haversineMetres, walkMinutes, type Poi, type Point } from './overpass.js'
 
 /**
  * Turning a pile of POIs into one listing's walkability block (PLAN.md §8.1).

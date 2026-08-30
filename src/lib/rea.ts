@@ -7,7 +7,7 @@ import {
   type PropertyType,
   type Travel,
 } from 'sydney-rental-schema'
-import type { RawListing } from './raw'
+import type { RawListing } from './raw.js'
 
 /**
  * Mapping the search library's `Listing` (src/types.ts) onto the shape a run needs.

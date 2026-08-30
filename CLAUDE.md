@@ -14,15 +14,18 @@ fetching · `src/distance.ts` geocoding, routing, the disk cache ·
 function · `src/mcp.ts` the four-tool adapter · `src/cli.ts` the entry point ·
 `src/setup.ts` interactive warm-up · `src/env.ts` loads `.env` first.
 
-`scripts/` is the run — capture, build, replay, envelope, enrich, check,
-validate, reset — and `scripts/lib/` its logic (scoring, ledger, search
-planning, walkability, photos/R2). They are the findings repo's former
-`scripts/`, moved unchanged; they import that repo's `src/lib/schema` by
-relative path, run through tsx (never compiled), and `scripts/lib/tools.ts` is
-how they reach `src/` in-process. **Byte-identical replay of both committed
-runs is the invariant** — `node dist/cli.js replay …` for each, then
-`git -C ../SydneyRealEstateFindings diff --stat data/` must print nothing. Two
-compilers: `npm run build` for `src/`, `npm run typecheck` for everything.
+`src/stages/` is the run — capture, build, replay, envelope, enrich, validate,
+reset, audit — each a module exporting `main(argv)` that `cli.ts` imports
+compiled. `src/lib/` is their logic (scoring, ledger, search planning,
+walkability, photos/R2). Both were the findings repo's `scripts/` until
+PHASE2.md Steps 2–3 moved them here, pointed them at the
+`sydney-rental-schema` package and gave them entry points; a stage signals
+failure by throwing (`src/lib/stage-error.ts`), never by exiting, so `run` can
+compose them. `scripts/` now holds only the seven checks, still on tsx until
+PHASE2.md Step 6 makes them a `node --test` suite. **Byte-identical replay of
+both committed runs is the invariant** — `node dist/cli.js replay …` for each,
+then `git -C ../SydneyRealEstateFindings diff --stat data/` must print nothing.
+Two compilers: `npm run build` for `src/`, `npm run typecheck` for everything.
 
 ## After changing server code, run the reload script
 
@@ -59,7 +62,7 @@ re-run it when calls actually start failing with the bot-protection error.
 
 Chrome takes an **exclusive lock on its user-data-dir**. Any script that calls
 `fetchPage` while the MCP server is live will fight it for that lock. The one
-deliberate exception is `capture` (`scripts/capture-run.ts`): it wants the warm
+deliberate exception is `capture` (`src/stages/capture.ts`): it wants the warm
 profile, so it cannot run while Claude Code has the adapter up — disconnect the
 server or run the reload script first.
 

@@ -1,5 +1,5 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import path from 'node:path'
 import process from 'node:process'
@@ -12,17 +12,18 @@ import {
   type ListingEntry,
   type Run,
 } from 'sydney-rental-schema'
-import { buildListingEntry, sortListings } from './lib/entry'
-import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
-import { suburbKey, type RawListing } from './lib/raw'
+import { buildListingEntry, sortListings } from '../lib/entry.js'
+import { dataPath, readJsonFile, writeJsonFile } from '../lib/json-io.js'
+import { fail } from '../lib/stage-error.js'
+import { suburbKey, type RawListing } from '../lib/raw.js'
 import {
   ReaCaptureSchema,
   excludedByKeyword,
   flattenCapture,
   reaToRawListing,
   type MappingProblem,
-} from './lib/rea'
-import { matchesSearch, type SearchCandidate } from './lib/searches'
+} from '../lib/rea.js'
+import { matchesSearch, type SearchCandidate } from '../lib/searches.js'
 
 /**
  * Rebuild an existing run from the capture it came from, after a mapping fix.
@@ -63,14 +64,6 @@ import { matchesSearch, type SearchCandidate } from './lib/searches'
  * or needs history for a listing the run never contained, this refuses.
  */
 
-const DRY_RUN = process.argv.includes('--dry-run')
-const RUN_ID = process.argv.find((arg) => arg.startsWith('--run-id='))?.slice(9)
-const CAPTURE_PATH = process.argv[2]
-
-function fail(message: string): never {
-  console.error(`\n✖ ${message}\n`)
-  process.exit(1)
-}
 
 /** What a mapping fix is allowed to move. */
 const DERIVED_FIELDS = [
@@ -112,9 +105,13 @@ const HISTORY_FIELDS = [
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
-async function main() {
+export async function main(argv: string[]): Promise<void> {
+  const DRY_RUN = argv.includes('--dry-run')
+  const RUN_ID = argv.find((arg) => arg.startsWith('--run-id='))?.slice(9)
+  const CAPTURE_PATH = argv[0]
+
   if (!CAPTURE_PATH || !RUN_ID) {
-    fail('usage: npm run replay:run -- <capture.json> --run-id=YYYY-MM-DDx [--dry-run]')
+    fail('usage: node dist/cli.js replay <capture.json> --run-id=YYYY-MM-DDx [--dry-run]')
   }
 
   const [index, ledger, suburbs, capture, previous] = await Promise.all([
@@ -379,5 +376,3 @@ async function main() {
   console.log(`\n  wrote       data/runs/${RUN_ID}/run.json`)
   console.log('\n  Next: npm run validate:data, then commit. The ledger and index are untouched.\n')
 }
-
-main().catch((error) => fail((error as Error).message))

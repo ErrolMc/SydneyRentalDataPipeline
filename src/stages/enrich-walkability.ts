@@ -1,13 +1,14 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import process from 'node:process'
 
 import { LedgerSchema, SiteConfigSchema, type Ledger } from 'sydney-rental-schema'
-import { computeConfigHash } from './lib/config-hash'
-import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
-import { fetchWalkabilityPois, type Point } from './lib/overpass'
-import { cacheIsFresh, walkabilityFor } from './lib/walkability'
+import { computeConfigHash } from '../lib/config-hash.js'
+import { dataPath, readJsonFile, writeJsonFile } from '../lib/json-io.js'
+import { fail } from '../lib/stage-error.js'
+import { fetchWalkabilityPois, type Point } from '../lib/overpass.js'
+import { cacheIsFresh, walkabilityFor } from '../lib/walkability.js'
 
 /**
  * Protocol step 6, the half a capture cannot supply: the nearest cafe,
@@ -29,15 +30,11 @@ import { cacheIsFresh, walkabilityFor } from './lib/walkability'
  * the plan and the cells without sending anything.
  */
 
-const DRY_RUN = process.argv.includes('--dry-run')
-const FORCE = process.argv.includes('--force')
 
-function fail(message: string): never {
-  console.error(`\n✖ ${message}\n`)
-  process.exit(1)
-}
+export async function main(argv: string[]): Promise<void> {
+  const DRY_RUN = argv.includes('--dry-run')
+  const FORCE = argv.includes('--force')
 
-async function main() {
   const [site, ledger] = await Promise.all([
     readJsonFile(dataPath('config', 'site.json'), SiteConfigSchema),
     readJsonFile(dataPath('knowledge', 'listings.json'), LedgerSchema),
@@ -73,7 +70,7 @@ async function main() {
   const points: Point[] = todo.map(([, entry]) => ({ lat: entry.lat!, lon: entry.lon! }))
 
   if (DRY_RUN) {
-    const { cellsFor } = await import('./lib/overpass')
+    const { cellsFor } = await import('../lib/overpass.js')
     const cells = cellsFor(points, site.walk.poi_radius_m)
     console.log(`\n  would ask Overpass about ${cells.length} cell(s):`)
     for (const cell of cells) {
@@ -125,5 +122,3 @@ async function main() {
   console.log(`\n  wrote       data/knowledge/listings.json — ${todo.length} listing(s) enriched`)
   console.log('\n  Next: replay the runs that should carry these, then npm run validate:data.\n')
 }
-
-main().catch((error) => fail((error as Error).message))

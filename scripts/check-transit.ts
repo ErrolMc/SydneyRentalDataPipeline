@@ -5,7 +5,7 @@ import process from 'node:process'
 
 import { IndexSchema, PRODUCT_CLASS, RunSchema, travelKey, OFFICE_ORIGIN_ID } from 'sydney-rental-schema'
 import type { JourneyComposition, Travel } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from './lib/json-io'
+import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 
 /**
  * The MCP server's `WALK_SUSPECT_KMH`, mirrored here **on purpose**.

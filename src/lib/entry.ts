@@ -9,9 +9,9 @@ import type {
   Travel,
 } from 'sydney-rental-schema'
 import { OFFICE_ORIGIN_ID } from 'sydney-rental-schema'
-import { listingImagePath } from './images'
-import { normaliseFeature, suburbKey, type RawListing } from './raw'
-import { commuteFromTravel, scoreListing } from './score'
+import { listingImagePath } from './images.js'
+import { normaliseFeature, suburbKey, type RawListing } from './raw.js'
+import { commuteFromTravel, scoreListing } from './score.js'
 
 /**
  * Turning one normalised listing into the entry a run publishes.

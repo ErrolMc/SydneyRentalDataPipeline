@@ -1,5 +1,5 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import process from 'node:process'
 
@@ -12,9 +12,10 @@ import {
   travelKey,
   type TravelPrecision,
 } from 'sydney-rental-schema'
-import { dataPath, readJsonFile, writeJsonFile } from './lib/json-io'
-import { callRoutePlaces } from './lib/tools'
-import { RoutePlacesReportSchema, toMislabelled } from './lib/route-places'
+import { dataPath, readJsonFile, writeJsonFile } from '../lib/json-io.js'
+import { fail } from '../lib/stage-error.js'
+import { callRoutePlaces } from '../lib/tools.js'
+import { RoutePlacesReportSchema, toMislabelled } from '../lib/route-places.js'
 
 /**
  * Measure a travel mode the runs never asked for, for listings we already know.
@@ -65,18 +66,12 @@ import { RoutePlacesReportSchema, toMislabelled } from './lib/route-places'
  * `npm run replay:run` backfills both runs with no REA spend and no new run.
  */
 
-const DRY_RUN = process.argv.includes('--dry-run')
-const FORCE = process.argv.includes('--force')
-const MODE = TravelMode.parse(
-  process.argv.find((arg) => arg.startsWith('--mode='))?.slice(7) ?? 'walk',
-)
 
-function fail(message: string): never {
-  console.error(`\n✖ ${message}\n`)
-  process.exit(1)
-}
+export async function main(argv: string[]): Promise<void> {
+  const DRY_RUN = argv.includes('--dry-run')
+  const FORCE = argv.includes('--force')
+  const MODE = TravelMode.parse(argv.find((arg) => arg.startsWith('--mode='))?.slice(7) ?? 'walk')
 
-async function main() {
   if (MODE === 'transit') {
     // Transit needs an arrive-by, and the run's own resolved moment is the only
     // one that keeps its numbers comparable with each other. Backfilling it here
@@ -199,5 +194,3 @@ async function main() {
   }
   console.log()
 }
-
-main().catch((error: unknown) => fail((error as Error).message))
