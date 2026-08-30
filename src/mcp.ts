@@ -8,16 +8,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { closeContext, fetchPage, NotWarmError } from "./browser.js";
-import { parseListingPage } from "./parse.js";
 import { buildListingUrl, suggestLocations } from "./search.js";
 import { fetchImages, IMAGE_SIZES } from "./images.js";
+import { getListing } from "./lib/listing-detail.js";
 import { searchListings, SearchListingsInput } from "./lib/search-listings.js";
 
 /**
  * The MCP adapter: what Claude Code talks to. Interactive use only —
  * `search_listings` for ad-hoc questions and `get_listing` for the run
  * protocol's absence-resolution step. The pipeline itself calls the same
- * functions in-process (src/lib/tools.ts); `geocode_places` and
+ * functions directly — `get_listing` is `lib/listing-detail.ts`, which
+ * `run`’s absence gate calls too. `geocode_places` and
  * `route_places` were only ever called by it, so they are no longer tools.
  */
 const server = new McpServer({ name: "sydney-rental-data-pipeline", version: "0.1.0" });
@@ -79,10 +80,8 @@ server.registerTool(
     },
   },
   async ({ listing }) => {
-    const url = buildListingUrl(listing);
     try {
-      const { html } = await fetchPage(url);
-      return ok(parseListingPage(html));
+      return ok(await getListing(listing));
     } catch (e) {
       return fail(explain(e));
     }
@@ -121,8 +120,7 @@ server.registerTool(
   },
   async ({ listing, limit, size, includeFloorplan }) => {
     try {
-      const { html } = await fetchPage(buildListingUrl(listing));
-      const detail = parseListingPage(html);
+      const detail = await getListing(listing);
 
       const urls = [
         ...(includeFloorplan ? (detail.floorplans ?? []) : []),

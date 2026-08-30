@@ -67,8 +67,11 @@ usage: node dist/cli.js <command> [args]
   reset [--confirm]              destroy runs, photos and knowledge — dry run without --confirm
   mcp                            serve the MCP adapter over stdio: search_listings,
                                  get_listing, get_listing_photos, resolve_location
-  run                            Phase 2 (MIGRATION.md): capture → build → validate in one
-                                 process. Until then, run them in turn per AGENT.md.
+  run --capture=<path>           the whole run in one process: absence gate → build →
+                                 enrich → replay → validate. Stops at the two human
+                                 gates (AGENT.md §4d, §9c). --resume goes on from
+                                 the first. Add --search to take a fresh capture
+                                 — ASK ERROL FIRST.
 
 Paths given to a script (a capture, --out, --cache) resolve against the current
 directory, so prefer absolute ones. Every npm script in package.json is an alias
@@ -172,7 +175,7 @@ try {
       break;
 
     case "run":
-      usage(2, "`run` is Phase 2 (MIGRATION.md). For now: capture, then build, then validate.");
+      await runStage("run", rest);
       break;
 
     default:
