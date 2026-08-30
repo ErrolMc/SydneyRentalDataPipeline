@@ -1,5 +1,5 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
-import '../src/env.js'
+import '../env.js'
 
 import process from 'node:process'
 
@@ -12,7 +12,8 @@ import {
   publicUrlFor,
   putObject,
   r2ConfigFromEnv,
-} from '../src/lib/r2.js'
+} from '../lib/r2.js'
+import { failAfterReport } from '../lib/stage-error.js'
 
 /**
  * One-time R2 setup check: `npm run check:r2`.
@@ -37,13 +38,13 @@ function step(label: string, ok = true, detail = ''): void {
   console.log(`  ${ok ? '✔' : '✖'} ${label}${detail ? `  ${detail}` : ''}`)
 }
 
-async function main() {
+export async function main(_argv: string[]): Promise<void> {
   const { config, missing } = r2ConfigFromEnv()
 
   if (!config) {
     console.error(`\n✖ the pipeline's .env is missing: ${missing.join(', ')}\n`)
     console.error('  See README, "Photo hosting" — one-time setup.\n')
-    process.exit(1)
+    failAfterReport()
   }
 
   console.log(`\nR2 check — bucket "${config.bucket}", account ${config.accountId.slice(0, 8)}…`)
@@ -65,7 +66,7 @@ async function main() {
   } catch (error) {
     step('upload (token can write)', false, (error as Error).message)
     console.error('\n  The token needs "Object Read & Write" on this bucket.\n')
-    process.exit(1)
+    failAfterReport()
   }
 
   try {
@@ -108,14 +109,9 @@ async function main() {
 
   if (failed) {
     console.error('\n✖ R2 is not ready.\n')
-    process.exit(1)
+    failAfterReport()
   }
 
   console.log('\n✔ R2 is ready.')
   console.log(`  Set NEXT_PUBLIC_IMAGE_BASE_URL=${config.publicBaseUrl} in Vercel too.\n`)
 }
-
-main().catch((error) => {
-  console.error(`\n✖ check-r2 crashed: ${(error as Error).message}\n`)
-  process.exit(1)
-})

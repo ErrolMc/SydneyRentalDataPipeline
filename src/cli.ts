@@ -30,18 +30,27 @@ const ENRICH: Record<string, string> = {
   transit: "enrich-transit",
 };
 
-const CHECKS: Record<string, string> = {
-  scoring: "check-scoring.ts",
-  walk: "check-walkability.ts",
-  searches: "check-searches.ts",
-  transit: "check-transit.ts",
-  ledger: "check-ledger.ts",
-  shares: "check-shares.ts",
-  r2: "check-r2.ts",
+/**
+ * The suites under `test/`, run by `node --test` out of `dist-test/`.
+ * `shares` and `r2` are not among them: one takes a capture path and the other
+ * talks to R2, and neither belongs in a runner invoked with no arguments.
+ */
+const SUITES: Record<string, string> = {
+  scoring: "scoring",
+  walk: "walkability",
+  searches: "searches",
+  transit: "transit",
+  ledger: "ledger",
+};
+
+/** The two that stayed commands, because of an argument and a network. */
+const CHECK_STAGES: Record<string, string> = {
+  shares: "check-shares",
+  r2: "check-r2",
 };
 
 /** What `check` runs with no names: everything that needs no argument and no network. */
-const DEFAULT_CHECKS = ["scoring", "walk", "searches", "transit", "ledger"];
+const DEFAULT_CHECKS = Object.keys(SUITES);
 
 const AUDITS: Record<string, string> = {
   capture: "audit-capture",
@@ -60,8 +69,9 @@ usage: node dist/cli.js <command> [args]
                                  when nothing changed — this is the migration's proof)
   envelope --stage=…             derive the search envelope (findings repo, ENVELOPE.md)
   enrich walk|travel|transit     add walkability / travel / transit legs to the ledger
-  check [name …]                 self-checks. Default: ${DEFAULT_CHECKS.join(" ")}.
-                                 Also: shares <capture>, r2
+  check [name]                   node --test over test/. Default: ${DEFAULT_CHECKS.join(" ")}.
+                                 Also: shares <capture>, r2 — an argument and a
+                                 network, so they are commands, not suites.
   validate [--check-remote]      validate the findings repo's data/ (the gate before a commit)
   audit capture <file> | postcodes
   reset [--confirm]              destroy runs, photos and knowledge — dry run without --confirm
@@ -96,17 +106,25 @@ async function runStage(name: string, argv: string[]): Promise<void> {
 }
 
 /**
- * The seven checks are still scripts, and still run through tsx — PHASE2.md
- * Step 6 turns them into a `node --test` suite, which is where the tsx
- * dependency finally goes.
+ * Run test suites in a child `node --test`. Its reporter writes the pass/fail
+ * summary itself, so a failure here wants the exit code and nothing added to it.
  */
-async function runCheck(file: string, rest: string[]): Promise<void> {
+async function runSuites(names: string[]): Promise<void> {
   const { join, dirname } = await import("node:path");
-  const { fileURLToPath, pathToFileURL } = await import("node:url");
-  const script = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", file);
-  process.argv = [process.argv[0], script, ...rest];
-  const { tsImport } = await import("tsx/esm/api");
-  await tsImport(pathToFileURL(script).href, import.meta.url);
+  const { fileURLToPath } = await import("node:url");
+  const { existsSync } = await import("node:fs");
+  const { spawnSync } = await import("node:child_process");
+
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const files = names.map((name) => join(root, "dist-test", "test", `${SUITES[name]}.test.js`));
+
+  const missing = files.filter((file) => !existsSync(file));
+  if (missing.length > 0) {
+    throw new StageError("the test suites are not built — run `npm run build`");
+  }
+
+  const result = spawnSync(process.execPath, ["--test", ...files], { stdio: "inherit" });
+  if (result.status !== 0) throw new StageError("", true);
 }
 
 function pick(table: Record<string, string>, key: string | undefined, what: string): string {
@@ -156,9 +174,15 @@ try {
       break;
 
     case "check": {
-      const names = rest.length ? [rest[0]] : DEFAULT_CHECKS;
-      // `check shares <capture>` passes the capture on; the rest take nothing.
-      for (const name of names) await runCheck(pick(CHECKS, name, "check"), rest.slice(1));
+      const name = rest[0];
+      // `check shares <capture>` and `check r2` are commands; the rest are suites.
+      if (name && CHECK_STAGES[name]) {
+        await runStage(CHECK_STAGES[name], rest.slice(1));
+      } else if (name) {
+        await runSuites([pick(SUITES, name, "check")]);
+      } else {
+        await runSuites(DEFAULT_CHECKS);
+      }
       break;
     }
 

@@ -1,0 +1,30 @@
+{
+  // Compiles `src/` together with `test/` into `dist-test/`, which
+  // `node --test` then runs. PHASE2.md Step 6 replaced the seven check scripts
+  // and the tsx that ran them with this.
+  //
+  // A second config rather than widening tsconfig.json's: that one emits the
+  // shipped `dist/` with `rootDir: src`, and a test file lives outside it.
+  // Compiling src twice costs a second or two and keeps the shipped output free
+  // of test code.
+  //
+  // Not Node's own type stripping: the sources import each other by `.js`
+  // specifier, which the resolver requires to exist on disk, so they have to be
+  // compiled somewhere before they can be run.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "outDir": "dist-test",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

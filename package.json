@@ -11,9 +11,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.test.json",
     "dev": "tsc --watch",
-    "typecheck": "tsc -p tsconfig.scripts.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "setup": "node dist/cli.js setup",
     "start": "node dist/cli.js mcp",
     "prepare": "npm run build",
@@ -25,16 +25,17 @@
     "enrich:walk": "node dist/cli.js enrich walk",
     "enrich:travel": "node dist/cli.js enrich travel",
     "enrich:transit": "node dist/cli.js enrich transit",
-    "check:scoring": "tsx scripts/check-scoring.ts",
-    "check:walk": "tsx scripts/check-walkability.ts",
-    "check:ledger": "tsx scripts/check-ledger.ts",
-    "check:searches": "tsx scripts/check-searches.ts",
+    "check:scoring": "node dist/cli.js check scoring",
+    "check:walk": "node dist/cli.js check walk",
+    "check:ledger": "node dist/cli.js check ledger",
+    "check:searches": "node dist/cli.js check searches",
     "audit:capture": "node dist/cli.js audit capture",
     "audit:postcodes": "node dist/cli.js audit postcodes",
-    "check:shares": "tsx scripts/check-shares.ts",
-    "check:transit": "tsx scripts/check-transit.ts",
-    "check:r2": "tsx scripts/check-r2.ts",
-    "reset:data": "node dist/cli.js reset"
+    "check:shares": "node dist/cli.js check shares",
+    "check:transit": "node dist/cli.js check transit",
+    "check:r2": "node dist/cli.js check r2",
+    "reset:data": "node dist/cli.js reset",
+    "test": "node dist/cli.js check"
   },
   "engines": {
     "node": ">=20"
@@ -45,7 +46,6 @@
     "patchright": "^1.52.5",
     "sharp": "^0.35.3",
     "sydney-rental-schema": "file:../SydneyRealEstateFindings/packages/schema",
-    "tsx": "^4.23.12",
     "zod": "^4.4.3"
   },
   "devDependencies": {

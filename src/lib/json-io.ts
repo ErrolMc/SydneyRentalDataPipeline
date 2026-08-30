@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -12,8 +13,26 @@ import type { z } from 'zod'
  * reflowed blob.
  */
 
-/** This package's root — where `package.json` and `.env` live. */
-export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+/**
+ * This package's root — where `package.json` and `.env` live.
+ *
+ * Found by walking up rather than counted in `..`s, because this module is run
+ * from three different depths: `src/lib/` in the sources, `dist/lib/` in the shipped
+ * build, and `dist-test/src/lib/` under `node --test`, whose config keeps the
+ * `src/` level that `dist/`'s `rootDir` flattens away. A fixed `'..', '..'` is
+ * right for two of those and silently resolves `FINDINGS_DIR` inside this repo
+ * for the third.
+ */
+function packageRoot(from: string): string {
+  for (let dir = from; ; ) {
+    if (existsSync(path.join(dir, 'package.json'))) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) return from
+    dir = parent
+  }
+}
+
+export const PACKAGE_ROOT = packageRoot(path.dirname(fileURLToPath(import.meta.url)))
 
 /**
  * The findings repo: the site whose `data/` and `public/` this pipeline writes.
