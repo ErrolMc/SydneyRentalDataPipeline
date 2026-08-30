@@ -41,6 +41,7 @@ import {
 } from '../lib/rea.js'
 import { unenrichedBlock } from '../lib/score.js'
 import { evaluateSearches, planSearchQueries, type SearchCandidate } from '../lib/searches.js'
+import { centroidCorrections, placeSuburb, placesBySuburbKey, stubSuburb } from '../lib/suburbs.js'
 import { allocateRunId, resolveTransitDeparture } from '../lib/sydney.js'
 
 /**
@@ -71,32 +72,6 @@ import { allocateRunId, resolveTransitDeparture } from '../lib/sydney.js'
  * this later adds photos rather than renumbering what older runs point at.
  */
 const DEFAULT_PHOTOS_PER_LISTING = 1
-
-function centroidOf(listings: RawListing[]): { lat: number; lon: number } | null {
-  const located = listings.filter((listing) => listing.lat !== null && listing.lon !== null)
-  if (located.length === 0) return null
-  const lat = located.reduce((sum, listing) => sum + (listing.lat as number), 0) / located.length
-  const lon = located.reduce((sum, listing) => sum + (listing.lon as number), 0) / located.length
-  return { lat: Number(lat.toFixed(6)), lon: Number(lon.toFixed(6)) }
-}
-
-function stubSuburb(name: string, postcode: string, centroid: { lat: number; lon: number }): SuburbProfile {
-  return {
-    name,
-    postcode,
-    sal_code: null,
-    centroid,
-    // Everything below is filled in by a build-suburbs stage (M6). Until
-    // then the suburb scoring factor excludes itself rather than guessing.
-    commute_baseline: null,
-    rents: null,
-    bonds: null,
-    crime: null,
-    census: null,
-    percentiles: null,
-    agent_notes: '',
-  }
-}
 
 export async function main(argv: string[]): Promise<void> {
   const DRY_RUN = argv.includes('--dry-run')
@@ -309,12 +284,37 @@ export async function main(argv: string[]): Promise<void> {
     bySuburb.set(key, [...(bySuburb.get(key) ?? []), raw])
   }
 
-  const unplaceableSuburbs: string[] = []
+  // The envelope already knows where these are. Asking the gazetteer again was
+  // a second derivation of the same fact, and the two drifted — see
+  // `src/lib/suburbs.ts`. Realigning touches `suburbs.json` and nothing else:
+  // a run refers to a suburb by `enrichment.suburb_ref`, so no run.json is
+  // rewritten and the replay invariant is unaffected.
+  const placesByKey = placesBySuburbKey(placesFile)
+  const corrections = centroidCorrections(nextSuburbs, placesByKey)
+  for (const correction of corrections) {
+    nextSuburbs[correction.key] = { ...nextSuburbs[correction.key], centroid: correction.to }
+  }
+  if (corrections.length > 0) {
+    console.log(`\n  ${corrections.length} suburb centroid(s) realigned to places.json:`)
+    for (const c of corrections) {
+      console.log(
+        `    ~ ${c.key.padEnd(24)} ${c.from.lat}, ${c.from.lon} → ${c.to.lat}, ${c.to.lon}  (${Math.round(c.metres)} m)`,
+      )
+    }
+  }
 
   // Ask once for everything that needs placing, before the loop — a run brings
-  // a handful of new suburbs at most.
+  // a handful of new suburbs at most, and now only the ones the envelope does
+  // not already hold. REA blends `surrounding` listings from neighbouring
+  // suburbs into every page, so one can arrive from outside the enumerated
+  // postcode range; that is what is left for the gazetteer to answer.
+  //
+  // Asked as "what cannot be placed *without* the gazetteer" rather than by
+  // restating the precedence here, which would be a second copy of it free to
+  // drift from `placeSuburb`'s.
+  const unplaceableSuburbs: string[] = []
   const needPlacing = [...bySuburb]
-    .filter(([key, listings]) => !nextSuburbs[key] && !centroidOf(listings))
+    .filter(([key, listings]) => !nextSuburbs[key] && !placeSuburb(listings, placesByKey.get(key), undefined))
     .map(([key, listings]) => ({ id: key, suburb: listings[0].suburb, postcode: listings[0].postcode }))
   let geocoded = new Map<string, Centroid>()
   if (needPlacing.length > 0) geocoded = await geocodeSuburbs(needPlacing)
@@ -322,19 +322,15 @@ export async function main(argv: string[]): Promise<void> {
   for (const [key, listings] of bySuburb) {
     if (nextSuburbs[key]) continue
 
-    // REA publishes no coordinates, so `centroidOf` almost always comes back
-    // null and the gazetteer does the work. It is kept as the preferred path
-    // because a mean of real listing positions beats a gazetteer centroid, and
-    // costs nothing on the day REA starts publishing them.
-    const centroid = centroidOf(listings) ?? geocoded.get(key)
+    const placed = placeSuburb(listings, placesByKey.get(key), geocoded.get(key))
 
-    if (!centroid) {
+    if (!placed) {
       unplaceableSuburbs.push(`${key} (${listings.length} listing(s))`)
       continue
     }
 
-    console.log(`    + suburb ${key} @ ${centroid.lat}, ${centroid.lon}`)
-    nextSuburbs[key] = stubSuburb(listings[0].suburb, listings[0].postcode, centroid)
+    console.log(`    + suburb ${key} @ ${placed.centroid.lat}, ${placed.centroid.lon} (${placed.source})`)
+    nextSuburbs[key] = stubSuburb(listings[0].suburb, listings[0].postcode, placed.centroid)
   }
 
   if (unplaceableSuburbs.length > 0) {

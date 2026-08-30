@@ -41,6 +41,7 @@ const SUITES: Record<string, string> = {
   searches: "searches",
   transit: "transit",
   ledger: "ledger",
+  suburbs: "suburbs",
 };
 
 /** The two that stayed commands, because of an argument and a network. */
