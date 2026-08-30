@@ -1,6 +1,7 @@
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
 import '../env.js'
 
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -228,28 +229,48 @@ export async function main(argv: string[]): Promise<void> {
     fail(`--resume, but no run is in progress (${path.relative(PACKAGE_ROOT, STATE_PATH)} is absent)`)
   }
 
+  // `--out` is `capture`'s own flag, and with `--search` it is also where the
+  // rest of this run reads from — every stage after the capture needs the path,
+  // not just the stage that writes it.
+  const OUT = argv.find((a) => a.startsWith('--out='))?.slice(6)
+
   const capturePath = CAPTURE_ARG
     ? path.resolve(CAPTURE_ARG)
-    : previous?.capture ?? null
+    : SEARCH && OUT
+      ? path.resolve(OUT)
+      : previous?.capture ?? null
 
-  if (!capturePath && !SEARCH) {
+  if (!capturePath) {
     fail(
       [
         'usage: node dist/cli.js run --capture=<path> [--run-id=…] [--resume]',
         '',
         '  --capture names a capture already taken. To go and take one — a real pass',
         '  against realestate.com.au, which Errol is asked about every time — pass',
-        '  --search as well, with --out=<path>.',
+        `  --search and --out=<path>${SEARCH ? '; --out is the one missing here' : ''}.`,
+      ].join('\n'),
+    )
+  }
+
+  // A dry run reads the capture at every stage; with --search there is not one
+  // yet, and every stage after the skipped capture would fail on the same
+  // missing file. Say so once, here.
+  if (DRY_RUN && !existsSync(capturePath)) {
+    fail(
+      [
+        `a dry run reads a capture, and ${path.basename(capturePath)} does not exist yet.`,
+        '  --search --dry-run has nothing to walk: either drop --dry-run, or point',
+        '  --capture at a capture you already have.',
       ].join('\n'),
     )
   }
 
   const state: RunState = previous ?? {
-    capture: capturePath ?? '',
+    capture: capturePath,
     runId: RUN_ID_OVERRIDE ?? null,
     done: [],
   }
-  if (capturePath) state.capture = capturePath
+  state.capture = capturePath
   if (RUN_ID_OVERRIDE) state.runId = RUN_ID_OVERRIDE
 
   const skipped: string[] = []
