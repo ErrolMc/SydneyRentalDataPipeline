@@ -4,9 +4,9 @@ What was done, why it is safe, what you have to decide, and what comes next. The
 this executes is [MIGRATION.md](MIGRATION.md) (its *Execution log* has the blow-by-blow);
 the decision is recorded as the findings repo's `docs/adr/0005-the-site-is-dumb.md`.
 
-**Nothing has been pushed.** Both repos are on `master`, clean, ahead of `origin`:
-this repo by 10 commits (`2adea98`..`b5ca3af` — seven for Phase 1, three after it), the
-findings repo by 1 (`039d1d2`).
+**Pushed.** Both repos are on `master`, clean, and `origin` has all of it: this repo's
+commits `2adea98`..`b5ca3af` (seven for Phase 1, three after it) and the findings repo's
+`039d1d2`. Errol pushed them himself on 2026-08-30, in three batches.
 
 ## The one-paragraph version
 
@@ -125,7 +125,8 @@ the MCP adapter, so it cannot run while Claude Code has the server up.
 
 ## Open items — need you
 
-1. **Push both repos** (10 commits here, 1 in findings). Not done, per the standing rule.
+1. ~~Push both repos~~ — done by Errol, 2026-08-30 (everything through `b5ca3af` here,
+   `039d1d2` in findings).
 2. ~~`.env` blanks~~ — resolved: every key in both env files is filled and was verified
    live on 2026-08-30 (Google geocode + walk route with the ferry flag, a TfNSW transit
    journey in legs, `check:r2` green, `validate:data -- --check-remote` confirming all 670
@@ -149,7 +150,7 @@ the MCP adapter, so it cannot run while Claude Code has the server up.
 
 Immediate (Phase 1 wrap-up):
 
-- Review the ten + one commits, then push.
+- ~~Review the commits, then push.~~ Done.
 - ~~Fill `.env`, run `npm run check:r2`, and re-run the pipeline gate with
   `validate:data -- --check-remote`.~~ Done, all green.
 - Restart Claude Code once so it picks up the renamed MCP entry (the tool list is cached per
