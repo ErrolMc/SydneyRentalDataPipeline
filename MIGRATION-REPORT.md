@@ -5,7 +5,8 @@ this executes is [MIGRATION.md](MIGRATION.md) (its *Execution log* has the blow-
 the decision is recorded as the findings repo's `docs/adr/0005-the-site-is-dumb.md`.
 
 **Nothing has been pushed.** Both repos are on `master`, clean, ahead of `origin`:
-this repo by 7 commits (`2adea98`..`b60d88a`), the findings repo by 1 (`039d1d2`).
+this repo by 10 commits (`2adea98`..`b5ca3af` — seven for Phase 1, three after it), the
+findings repo by 1 (`039d1d2`).
 
 ## The one-paragraph version
 
@@ -52,6 +53,9 @@ RealEstateMCP/  (MCP server)                  SydneyRentalDataPipeline/       (p
 | `76e870f` | 3 | `mcp-client.ts` deleted. `scripts/lib/tools.ts` makes the same four calls in-process, with the same zod validation the MCP handlers applied, the same argument shims, and a `JSON.parse(JSON.stringify(…))` so results are what the wire carried. `search_listings` extracted to `src/lib/search-listings.ts`. Every script loads `.env` first. |
 | `5dd5d34` | 4 | R2 keys move into this repo's `.env`; the `.env.pipeline` loader and its strings go; "Photo hosting" moves into this README. |
 | `b60d88a` | 6 | `node dist/cli.js <command>` — `setup capture build replay envelope enrich check validate audit reset mcp`. Scripts untouched: the CLI sets `process.argv` and imports each through tsx. `src/index.ts` → `src/mcp.ts` with four tools (`geocode_places`/`route_places` dropped — only the scripts ever called them). Package renamed `sydney-rental-data-pipeline`; README and CLAUDE.md rewritten. |
+| `35812ea` | after | This report. |
+| `74c6782` | after | `REALESTATE_MCP_TRANSIT_ROUTER` (`tfnsw` \| `google`) — transit gets its own setting instead of riding on whether `TFNSW_API_KEY` happens to be set; explicit means no fallback. `REALESTATE_MCP_ROUTER` stays road-only. |
+| `b5ca3af` | after | `R2_BUCKET` in `.env.example`/README is a `<your-bucket>` placeholder — the old example name was also what `.env.pipeline` carried, which is why R2 had never actually been configured on this machine. |
 
 ### Findings repo (`SydneyRealEstateFindings`)
 
@@ -121,11 +125,13 @@ the MCP adapter, so it cannot run while Claude Code has the server up.
 
 ## Open items — need you
 
-1. **Push both repos** (7 commits here, 1 in findings). Not done, per the standing rule.
-2. **`.env` blanks**: `TFNSW_API_KEY` exists nowhere on this machine (transit falls back to
-   Google and `enrich:transit` refuses to write until it is set); the four R2 secrets are
-   empty (`build`/`reset` refuse; `validate --check-remote` unavailable). `check:r2` will
-   tell you when they are right.
+1. **Push both repos** (10 commits here, 1 in findings). Not done, per the standing rule.
+2. ~~`.env` blanks~~ — resolved: every key in both env files is filled and was verified
+   live on 2026-08-30 (Google geocode + walk route with the ferry flag, a TfNSW transit
+   journey in legs, `check:r2` green, `validate:data -- --check-remote` confirming all 670
+   photos, the site's image base URL serving them, the Embed key answering with the
+   localhost referer). The one wrong value was the bucket name, now
+   `errol-real-estate-findings`.
 3. ~~`REALESTATE_MCP_ROUTER=valhalla` per the plan's template~~ — resolved: `.env` now says
    `google` for road modes (what the committed runs used), and transit has its own
    setting, `REALESTATE_MCP_TRANSIT_ROUTER` (`tfnsw` | `google`, no fallback when set;
@@ -143,9 +149,9 @@ the MCP adapter, so it cannot run while Claude Code has the server up.
 
 Immediate (Phase 1 wrap-up):
 
-- Review the seven + one commits, then push.
-- Fill `.env`, run `npm run check:r2`, and re-run the pipeline gate once with
-  `validate:data -- --check-remote`.
+- Review the ten + one commits, then push.
+- ~~Fill `.env`, run `npm run check:r2`, and re-run the pipeline gate with
+  `validate:data -- --check-remote`.~~ Done, all green.
 - Restart Claude Code once so it picks up the renamed MCP entry (the tool list is cached per
   session; `geocode_places`/`route_places` disappear, nothing else changes).
 - Run `npm run build` by hand after any dependency change here — `prepare` did not catch
