@@ -9,18 +9,108 @@ does not replace it. It is the ordered sequence that came out of asking one ques
 Also read the findings repo's `AGENT.md` (the run protocol, and the authority on what to
 commit) and [README.md](README.md) (the commands).
 
+**Arriving on a different machine than the one this was written on? Start at §0.** One item
+there — the captures — cannot be recovered if it is skipped.
+
+---
+
+## 0. Picking this up on another machine — do this first
+
+Nothing below works until this does, and one item cannot be recovered if it is skipped.
+
+### 0.1 The captures are the one thing git will not give you
+
+`captures/` sits **outside both repos** — a sibling directory, tracked by neither, with no
+backup. It holds the only two captures the project has:
+
+```
+2026-08-24-walk15.json      866 KB
+2026-08-24-transit25.json  15.0 MB
+```
+
+**Copy them across by hand before you start.** A fresh capture cannot recreate them: the
+listings have expired, and the route cache is empty, so REA would answer a different question
+at real cost. Without them you cannot run the replay invariant, which is the project's cheapest
+and most important regression test, and you cannot verify Step 2 either — its check is *run
+`check:shares` against the committed transit capture*.
+
+Put them anywhere, then set `$CAPTURES` to that directory for the commands in this file. If
+they were lost, say so immediately rather than working around it — that is a decision for
+Errol, not a workaround.
+
+### 0.2 Clone both repos as siblings
+
+The pipeline depends on `file:../SydneyRealEstateFindings/packages/schema`, and a `file:`
+dependency is a path. They must sit side by side under one parent:
+
+```
+<parent>/
+  SydneyRentalDataPipeline/
+  SydneyRealEstateFindings/
+  captures/                  # from 0.1
+```
+
+### 0.3 Install, findings first
+
+```bash
+cd SydneyRealEstateFindings && npm install     # this is what builds packages/schema
+cd ../SydneyRentalDataPipeline && npm install
+```
+
+Node 20 or newer (`engines`); the committed work was done on v22.18.0.
+
+### 0.4 Rebuild `.env` from `.env.example`
+
+**`.env` is gitignored**, so it does not travel. `.env.example` documents all eleven keys;
+Errol holds the secrets. The ones that must be right:
+
+| Key | Why it matters here |
+|---|---|
+| `REALESTATE_MCP_DISTANCE_CACHE` | Must point at `<parent>/SydneyRealEstateFindings/data/cache/mcp-cache.json`. **The path changed in `43a4832`** — an `.env` copied from anywhere older points at `data/knowledge/mcp-cache.json`, which no longer exists, and the router will silently fall back to `~/.realestate-mcp/distance-cache.json` instead. |
+| `GOOGLE_MAPS_API_KEY` | Geocoding and route matrix. Absent, `assertRoutable` throws rather than guessing. |
+| `TFNSW_API_KEY` | Transit legs. Absent, transit falls back to Google, which returns a duration and no legs. |
+| `R2_*` (five keys) | `build` refuses to run without them unless `--local-images`, because a run without R2 records photo paths that resolve to nothing. |
+
+Confirm with `node dist/cli.js check r2` and `npm run check:cache` — the latter should report
+`0 route(s), 0 position(s)` from `data/cache/mcp-cache.json`. If it says the cache is missing,
+`REALESTATE_MCP_DISTANCE_CACHE` is wrong.
+
+### 0.5 Warm the Chrome profile
+
+The profile lives in `~/.realestate-mcp/profile` and is machine-local, so it will be cold:
+
+```bash
+node dist/cli.js setup
+```
+
+A cold profile is the single most common cause of a failed capture, and Kasada returns 429 to
+anything unwarmed. Do this before Step 4, not during it.
+
+### 0.6 Prove the move worked
+
+```bash
+npm run typecheck && npm run build && npm test        # 7 suites, 225 assertions
+npm run validate:data                                 # 4 known warnings, no errors
+```
+
+Then the replay invariant from §1. **If it does not come back clean on a machine where no code
+has changed, the problem is the move, not the code** — most likely line endings or the wrong
+capture files. Fix that before touching anything in §3.
+
 ---
 
 ## 1. Where things stand, 2026-08-30
 
-Three commits have landed since FRESH-RUN.md was written. Two of them are **local and
-unpushed** — ask Errol before pushing, always.
+Four commits have landed since FRESH-RUN.md was written. All are pushed except this file's
+own — check `git log --oneline @{u}..HEAD` in both repos rather than trusting this table, and
+ask Errol before pushing anything, always.
 
-| Commit | Repo | State | What it did |
-|---|---|---|---|
-| `15af160` | pipeline | pushed | A suburb has one centroid, and `places.json` owns it. `build` realigns the 43 committed profiles that had drifted (up to 1.47 km) and seeds new ones from the envelope instead of re-geocoding. |
-| `43a4832` | findings | **local** | `McpCacheSchema` + `cacheExpiry`; cache moved to `data/cache/`; `SuburbProfile.observed_rents`; `FactorScore.source`. |
-| `c7a4e7e` | pipeline | **local** | `reset` now empties the route cache (it did not, which was a live bug); the cache is written sorted and reported by `validate`; `build` computes `observed_rents`; `suburbFactor` falls back to them. |
+| Commit | Repo | What it did |
+|---|---|---|
+| `15af160` | pipeline | A suburb has one centroid, and `places.json` owns it. `build` realigns the 43 committed profiles that had drifted (up to 1.47 km) and seeds new ones from the envelope instead of re-geocoding. |
+| `43a4832` | findings | `McpCacheSchema` + `cacheExpiry`; cache moved to `data/cache/`; `SuburbProfile.observed_rents`; `FactorScore.source`. |
+| `c7a4e7e` | pipeline | `reset` now empties the route cache (it did not, which was a live bug); the cache is written sorted and reported by `validate`; `build` computes `observed_rents`; `suburbFactor` falls back to them. |
+| `81e2bc2` | pipeline | This file. |
 
 Current shape:
 
@@ -47,9 +137,12 @@ npm run typecheck && npm run build && npm run check:auth && npm run check:filter
 empty in the findings repo. It still holds as of `c7a4e7e` — run it after every change to
 `src/lib/`:
 
+`$CAPTURES` is wherever §0 put the capture files — on the machine this was written on,
+`E:/Personal Projects/SydneyRealEstate/captures`.
+
 ```bash
-node dist/cli.js replay "E:/Personal Projects/SydneyRealEstate/captures/2026-08-24-walk15.json"    --run-id=2026-08-24a
-node dist/cli.js replay "E:/Personal Projects/SydneyRealEstate/captures/2026-08-24-transit25.json" --run-id=2026-08-25a
+node dist/cli.js replay "$CAPTURES/2026-08-24-walk15.json"    --run-id=2026-08-24a
+node dist/cli.js replay "$CAPTURES/2026-08-24-transit25.json" --run-id=2026-08-25a
 git -C ../SydneyRealEstateFindings diff --stat data/     # must print nothing
 git -C ../SydneyRealEstateFindings checkout -- data/runs/
 ```
@@ -175,7 +268,7 @@ before committing to a large one.
 
 ```bash
 node dist/cli.js run --search \
-  --out="E:/Personal Projects/SydneyRealEstate/captures/<date>-pilot.json" \
+  --out="$CAPTURES/<date>-pilot.json" \
   --arrive-by=<the value resolveTransitDeparture returns today> \
   --only=<two or three suburbs> \
   --photos=8
@@ -282,6 +375,8 @@ Ask before pushing.
 
 ## 5. Done means
 
+- [ ] **§0** — on a new machine: captures copied, repos siblings, `.env` rebuilt with the new
+      cache path, profile warmed, and the replay invariant clean before any code is touched.
 - [ ] **Step 1** — `build` refuses a capture whose transit arrive-by is not the one it computed.
 - [ ] **Step 2** — `check:shares` reports a real number against a group-based capture.
 - [ ] **Step 3** — studio flagging decided with Errol, and done before the run if yes.
