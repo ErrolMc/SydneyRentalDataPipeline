@@ -9,8 +9,9 @@ does not replace it. It is the ordered sequence that came out of asking one ques
 Also read the findings repo's `AGENT.md` (the run protocol, and the authority on what to
 commit) and [README.md](README.md) (the commands).
 
-**Arriving on a different machine than the one this was written on? Start at §0.** One item
-there — the captures — cannot be recovered if it is skipped.
+**Arriving on a different machine than the one this was written on? Start at §0.** Its first
+item is the captures: verify both files are on disk and their hashes match **before** doing
+anything else. They are irreplaceable, and nothing else in this file works without them.
 
 ---
 
@@ -18,25 +19,51 @@ there — the captures — cannot be recovered if it is skipped.
 
 Nothing below works until this does, and one item cannot be recovered if it is skipped.
 
-### 0.1 The captures are the one thing git will not give you
+### 0.1 The captures must be on disk before anything else — check, do not assume
 
-`captures/` sits **outside both repos** — a sibling directory, tracked by neither, with no
-backup. It holds the only two captures the project has:
+`captures/` sits **outside both repos** — a sibling of them, tracked by neither, no backup.
+`git clone` gets you both repos and none of this. It holds the only two captures the project
+has, and they cannot be regenerated: the listings have expired and the route cache is empty, so
+REA would answer a different question at real cost.
+
+The layout to arrive at, with the exact bytes to expect:
 
 ```
-2026-08-24-walk15.json      866 KB
-2026-08-24-transit25.json  15.0 MB
+<parent>/
+  SydneyRealEstateFindings/
+  SydneyRentalDataPipeline/
+  captures/
+    2026-08-24-transit25.json   15,043,848 bytes
+    2026-08-24-walk15.json         865,516 bytes
 ```
 
-**Copy them across by hand before you start.** A fresh capture cannot recreate them: the
-listings have expired, and the route cache is empty, so REA would answer a different question
-at real cost. Without them you cannot run the replay invariant, which is the project's cheapest
-and most important regression test, and you cannot verify Step 2 either — its check is *run
-`check:shares` against the committed transit capture*.
+**Transferred via OneDrive, 2026-08-31.** Copy them out of the synced folder to a real local
+path and point `$CAPTURES` at that — do not run against the OneDrive folder itself. With Files
+On-Demand a 15 MB file lists at full size while its contents are still cloud-only, so a
+directory listing proves nothing; and a sync that is still running gives you a partial file
+that parses as far as it goes and then fails somewhere unhelpful.
 
-Put them anywhere, then set `$CAPTURES` to that directory for the commands in this file. If
-they were lost, say so immediately rather than working around it — that is a decision for
-Errol, not a workaround.
+**Verify before continuing.** Sizes catch a truncated sync; the hashes catch everything else:
+
+```bash
+cd "$CAPTURES"
+sha256sum 2026-08-24-transit25.json 2026-08-24-walk15.json
+```
+
+```
+0df885ce900f86eb1ebdcc1f00fceeb44826f800a5a2a2fd4dddf1dd0b33dd21  2026-08-24-transit25.json
+c0247e87c1e706063a6ed5041a595bb140e790c40fb14d5e4164b648a4034b75  2026-08-24-walk15.json
+```
+
+If either hash differs, the sync is incomplete or the file is not the one this project was
+built against — re-copy rather than proceeding. On Windows without `sha256sum`:
+`certutil -hashfile <file> SHA256`.
+
+**Do not start §0.2 until both hashes match.** Without these files there is no replay
+invariant — the project's cheapest regression test — and no way to verify Step 2, whose check
+is to run `check:shares` against the committed transit capture. If they are lost or a hash
+cannot be made to match, stop and tell Errol. That is a decision for him, not something to
+work around.
 
 ### 0.2 Clone both repos as siblings
 
@@ -375,8 +402,9 @@ Ask before pushing.
 
 ## 5. Done means
 
-- [ ] **§0** — on a new machine: captures copied, repos siblings, `.env` rebuilt with the new
-      cache path, profile warmed, and the replay invariant clean before any code is touched.
+- [ ] **§0** — on a new machine: **both captures on disk with matching sha256**, repos
+      siblings, `.env` rebuilt with the new cache path, profile warmed, and the replay
+      invariant clean before any code is touched.
 - [ ] **Step 1** — `build` refuses a capture whose transit arrive-by is not the one it computed.
 - [ ] **Step 2** — `check:shares` reports a real number against a group-based capture.
 - [ ] **Step 3** — studio flagging decided with Errol, and done before the run if yes.
