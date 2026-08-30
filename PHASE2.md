@@ -263,17 +263,92 @@ After this, `tsx` is no longer needed here and comes out of `dependencies`.
 
 ## Done means
 
-- [ ] `packages/schema` exists, both repos import it by name, no relative path crosses the repo
+- [x] `packages/schema` exists, both repos import it by name, no relative path crosses the repo
       boundary except `FINDINGS_DIR`.
-- [ ] `scripts/` here holds nothing but tests; every stage is `src/stages/*.ts` with an exported
+- [x] `scripts/` here holds nothing but `reload-mcp.ps1`; the suites are `test/`; every stage is `src/stages/*.ts` with an exported
       `main(argv)`; `cli.ts` imports them compiled; no tsx at runtime.
-- [ ] `tools.ts`, both wire parsers, the JSON round-trip and `BATCH = 40` are gone.
-- [ ] `node dist/cli.js run` does a whole run and stops at the two gates.
-- [ ] `node --test` is the check gate; `check:shares` and `check:r2` remain subcommands.
-- [ ] Replay of both runs is byte-identical after every step; the golden corpus differs only
+- [x] `tools.ts`, both wire parsers, the JSON round-trip and `BATCH = 40` are gone.
+- [x] `node dist/cli.js run` does a whole run and stops at the two gates.
+- [x] `node --test` is the check gate; `check:shares` and `check:r2` remain subcommands.
+- [x] Replay of both runs is byte-identical after every step; the golden corpus differs only
       where the execution log says it should.
-- [ ] Both gates pass. ADR 0006 written. PHASE2-REPORT.md written. Nothing pushed without Errol.
+- [x] Both gates pass. ADR 0006 written. PHASE2-REPORT.md written. Nothing pushed without Errol.
 
 ## Execution log
 
 Filled in as it happens, like MIGRATION.md's. Items needing Errol's word marked **(Errol)**.
+
+**Step 0.** The corpus is 22 commands, in `scratch/baseline/`. Recorded before anything moved,
+with a replay run first to confirm the acceptance test held at the starting point
+(`fc2dc174…`, `910cfb78…`).
+
+**Step 1** (findings `4362258`). One correction to the plan, found in the code: the 11 schema
+files' relative imports are extensionless (`from './primitives'`), and `tsc` emits the specifier
+verbatim, so a package built from them would have loaded nothing under Node's ESM resolver. They
+carry `.js` extensions now — the only change to those files. Rename detection missed `index.ts`
+because every line of it changed; the content is intact.
+
+Two dozen files show as modified in `git status` and vanish from `git diff`: `sed -i` rewrote
+CRLF working copies as LF, which git normalises away. Only the 25 import sites are real.
+
+**Step 2** (`652871e`, plus `85b6131` for this plan). The corpus came back byte for byte, all 22.
+`score.ts` and `rea.ts` had accumulated four and two import statements from what used to be
+different subpaths; merged to one value and one type import each.
+
+**Step 3** (`d3d44a0`). The largest step, and three things were not in the plan:
+
+- Node16 resolution needs `.js` on every relative import, so 69 of them changed. The plan said
+  the fold would let `rootDir: src` cover everything; it did not say what that costs.
+- Six of the eleven stages had no `main()` and ran at module scope. Wrapping them meant
+  re-indenting bodies containing two-line template literals whose second line carries its own
+  leading whitespace — indent that and you change what the program prints.
+- `capture.ts`'s `fetchLocation` closed over `arriveBy`, which became a local inside `main`.
+  It takes it as a parameter now. The compiler caught it; nothing else would have.
+
+Two corpus differences, both intended: `build` and `replay` with no arguments printed usage
+naming `npx tsx scripts/build-run.ts` and `npm run replay:run`, paths that stopped existing.
+
+**Step 4** (`16525eb`). The plan asked for a before/after routing fixture. What it got is
+better and cheaper: `parse(wire(x))` compared against `x` on one live answer proves the
+round-trip and the parsers are identity, in a single run rather than two. A second probe covers
+what that one cannot — `tools.ts` also translated `{ id, lat, lng }` into `{ id, coord }`, and
+eight call sites do that inline now, where a swapped pair type-checks and produces plausible
+minutes. Both are in `scratch/probe-wire.ts`. **(Errol)** The transit journey path could not be
+exercised: it needs TfNSW legs, and the probe ran against the road path only.
+
+Also found: `enrich-transit`'s failure message offered to "resume from the same place", which
+was never true — the ledger is written once, after every batch. Corrected rather than carried.
+
+**Step 5** (`e4c5158`). `run` stops at both gates as planned. Two things the plan did not say:
+
+- The absence gate checkpoints its `gone` map every 25 fetches and skips ids already answered,
+  so a bot block 200 pages into 276 costs the last few rather than the pass. Step 4 had just
+  found the same false promise of resume in `enrich-transit`; this avoids inheriting it.
+- **(Errol)** The gate's fetch loop has not been run for real — 276 REA page loads, and this
+  repo asks before it talks to REA. Everything around it was: a dry run walks all eight stages
+  and writes nothing, a real run against a *copy* of `data/` built `2026-08-30a` and passed
+  validate, the commentary gate fails a blank run, and `--resume` skips to where it left off.
+
+`REALESTATE_MCP_TRANSIT_ROUTER` is `tfnsw` with a key set, so transit enrichment runs rather
+than skipping. MIGRATION-REPORT.md's note that it is "currently `google` until the TfNSW key
+exists" is out of date.
+
+**Step 6** (`b6a3eaa`). 174 named assertions across five suites. Assertions are recorded as each
+body runs and replayed as subtests afterwards, which keeps `check` synchronous — it is called
+from about two hundred places, some across several lines — and keeps the printed evidence in
+order. `check:shares` and `check:r2` became stages rather than suites.
+
+One real bug fell out: `json-io.ts` found `PACKAGE_ROOT` by counting `..`s, which is right from
+`src/lib/` and `dist/lib/` and wrong from `dist-test/src/lib/`, where the test config keeps the
+`src/` level `dist/` flattens. It resolved `FINDINGS_DIR` to a path inside this repo and every
+suite failed. It walks up to `package.json` now.
+
+**(Errol)** Worth knowing, and deliberately not fixed here: `check:shares` reads
+`capture.results`, the legacy flat array, which every capture since named searches leaves empty.
+It has been reporting "0 flagged" on real captures. Fixing it changes what it measures, so it is
+its own commit.
+
+**Step 7.** Docs. ADR 0006 records the schema package — what it fixes, and what it does not:
+the sibling layout and the same-zod pin both survive, because a `file:` dependency is a path and
+a linked package resolves zod from its own tree. MIGRATION.md's Phase 2 list is struck through
+except studio flagging, which stays open on purpose.

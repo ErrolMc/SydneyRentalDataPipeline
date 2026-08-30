@@ -12,25 +12,29 @@ Claude Code. That used to be the whole program; now it is one subcommand.
 SydneyRentalDataPipeline/        this repo
   src/            REA scrape + parse, geocode, route (Valhalla/ORS/Google), TfNSW,
                   images — and cli.ts, mcp.ts, setup.ts
-  scripts/        the run: capture → build → enrich → check → validate (see below)
-  scripts/lib/    scoring, ledger, search planning, walkability, photos/R2
+  src/stages/     the run, one module per step, each exporting main(argv)
+  src/lib/        scoring, ledger, search planning, walkability, photos/R2
+  test/           node --test suites (the former check:* scripts)
   .env            every key: TFNSW_API_KEY, GOOGLE_MAPS_API_KEY, R2_*, …
   writes to  →    ../SydneyRealEstateFindings/data/   (and its public/images mirror)
 
 SydneyRealEstateFindings/        the site: src/ + data/ + .env.local, five self-checks
+  packages/schema/               the zod schema both repos depend on
 ```
 
-The two checkouts must sit side by side: the scripts import the site's zod schema
-(`src/lib/schema`) across the boundary by relative path, so the schema stays with the data it
-describes. `FINDINGS_DIR` relocates the data, not the code. The move is recorded in
-[MIGRATION.md](MIGRATION.md).
+The two checkouts must sit side by side. The schema lives with the data it describes, as the
+`sydney-rental-schema` package inside the findings repo, and this one depends on it by path
+(`file:../SydneyRealEstateFindings/packages/schema`), so npm links it rather than copying it.
+`FINDINGS_DIR` relocates the data, not the code or the package. The moves are recorded in
+[MIGRATION.md](MIGRATION.md) (Phase 1) and [PHASE2.md](PHASE2.md) (Phase 2).
 
 ## Requirements
 
 - **Node.js 20.12+** (`process.loadEnvFile`)
 - **Google Chrome** installed (the real browser — see [How it works](#how-it-works))
 - The findings repo checked out as `../SydneyRealEstateFindings`, with its own `npm install`
-  (the scripts resolve `zod` for the schema files from there; both repos pin 4.4.3)
+  (that is what builds `packages/schema`, and the linked package resolves `zod` from there —
+  both repos pin 4.4.3)
 
 ## Setup
 
@@ -59,22 +63,49 @@ alias for one of them, kept so the run protocol's commands still read the same.
 | `replay <capture> --run-id=…` | `npm run replay:run` | Rebuild a committed run from its capture. Byte-identical when nothing changed — the migration's own proof |
 | `envelope --stage=…` | `npm run build:envelope` | Derive the search envelope (findings `ENVELOPE.md`) |
 | `enrich walk\|travel\|transit` | `npm run enrich:walk` etc. | Add walkability / routed travel / transit legs to the ledger |
-| `check [name …]` | `npm run check:scoring` etc. | Self-checks. Default `scoring walk searches transit ledger`; also `shares <capture>`, `r2` |
+| `check [name]` | `npm test`, `npm run check:scoring` etc. | `node --test` over `test/`. Default `scoring walk searches transit ledger`. Also `shares <capture>` and `r2`, which take an argument and a network and so are commands rather than suites |
 | `validate [--check-remote]` | `npm run validate:data` | Validate the findings repo's `data/` — the gate before a data commit |
 | `audit capture <file>` / `audit postcodes` | `npm run audit:*` | Reports; nothing written |
 | `reset [--confirm]` | `npm run reset:data` | Destroy runs, photos and knowledge. Dry run without `--confirm` |
 | `mcp` | `npm start` | Serve the MCP adapter over stdio |
+| `run --capture=…` | — | The whole run in one process: absence gate → build → enrich → replay → validate, stopping at the two human gates. `--resume` goes on from the first |
 
 Paths handed to a command — a capture, `--out`, `--cache`, `--places-out` — resolve against the
 current directory, so prefer absolute ones. The committed runs' captures live at
 `E:/Personal Projects/SydneyRealEstate/captures/`.
 
-The run protocol itself — what to do in what order, the two human gates, what to commit — is the
-findings repo's `AGENT.md`; it runs from here and commits there, because `data/` is versioned
-there. Before a data commit, this repo's gate is:
+### `run` — the whole thing at once
 
 ```bash
-npm run typecheck && npm run build && npm run check:scoring && npm run check:walk && npm run check:searches && npm run check:transit && npm run check:ledger && npm run validate:data
+node dist/cli.js run --capture="E:/Personal Projects/SydneyRealEstate/captures/<capture>.json"
+# … the absence gate prints its table and stops …
+node dist/cli.js run --resume
+```
+
+`run` does capture → absence gate → build → enrich walk · travel · transit → replay → validate
+in one process, keeping its place in `scratch/run-state.json`. The replay is the step it exists
+to stop you forgetting: the enrichers write the **ledger**, because a routed minute is a fact
+about a place rather than about a moment, and a replay is what folds their answers into the run
+just built.
+
+It stops at both of AGENT.md's human gates:
+
+- **Absence** — it fetches every active-but-absent listing's page, writes proposed verdicts into
+  the capture's `gone` map, prints the table and stops. "Page gone" and "leased" are the same
+  evidence read two ways, so the reading is yours. Anything it could not reach gets no verdict
+  and is left out of the map. `--skip-absence` skips the whole step; say so in the commentary.
+- **Commentary** — checked at the end. `run` will not call a run ready to commit without it.
+
+`--dry-run` walks all of it and writes nothing. `--no-enrich` stops after the build. `--search`
+is the explicit opt-in to taking a fresh capture, which is a real pass against REA — **ask Errol
+first**, as everywhere else here.
+
+The protocol around it — what to commit, and what to say in the commentary — is the findings
+repo's `AGENT.md`; the run happens here and commits there, because `data/` is versioned there.
+Before a data commit, this repo's gate is:
+
+```bash
+npm run typecheck && npm run build && npm test && npm run validate:data
 ```
 
 `validate:data -- --check-remote` also verifies every photo path against R2 when the keys are
@@ -83,7 +114,7 @@ in. The findings repo has its own, smaller gate for the site.
 ## The MCP adapter
 
 What Claude Code talks to. Interactive use only: the pipeline calls the same functions
-in-process (`scripts/lib/tools.ts`).
+directly — `get_listing` is `src/lib/listing-detail.ts`, which `run`'s absence gate calls too.
 
 | Tool | What it does |
 |---|---|
@@ -223,15 +254,19 @@ leaves nothing behind for a later run to mistake for a real file.
 
 ## Development
 
-Two compilers, on purpose. `npm run build` (`tsconfig.json`) compiles `src/` to `dist/` — that is
-what the CLI and the MCP adapter run. `npm run typecheck` (`tsconfig.scripts.json`) type-checks
-`scripts/` together with `src/` and the findings schema files they import, and emits nothing:
-the scripts run through `tsx`, straight from TypeScript, whether via `npm run <script>` or via
-`dist/cli.js`, which hands them to tsx one at a time. Run both after any change to either tree.
+Two configs, one command. `npm run build` runs both: `tsconfig.json` compiles `src/` to `dist/`,
+which is what the CLI and the MCP adapter run, and `tsconfig.test.json` compiles `src/` and
+`test/` together to `dist-test/`, which `node --test` runs. `npm run typecheck` is the second
+one with `--noEmit`. Nothing compiles TypeScript at run time any more — there is no `tsx` here.
 
-The scripts are exactly the files that lived in the findings repo's `scripts/`, moved without
-changing what they compute — the proof is `replay` reproducing both committed runs byte for
-byte, which is worth re-running after any change under `scripts/lib/`:
+`npm test` is `node dist/cli.js check`: 174 assertions over the scoring model, the ledger merge,
+search planning, walkability geometry and the transit classifier. They print their working out
+as well as passing, because that is what they are for — read `check:scoring`'s arithmetic before
+trusting a run's numbers.
+
+Everything under `src/stages/` and `src/lib/` came from the findings repo's `scripts/` and still
+computes what it computed there. The proof is `replay` reproducing both committed runs byte for
+byte, which is worth re-running after any change under `src/lib/`:
 
 ```bash
 node dist/cli.js replay "E:/Personal Projects/SydneyRealEstate/captures/2026-08-24-walk15.json"    --run-id=2026-08-24a
@@ -290,6 +325,8 @@ $env:REALESTATE_MCP_PROFILE = "<scratch dir>"
 
 **A filter seems to be ignored** — it probably is. REA drops malformed filter segments silently and still returns 200. Compare `totalResults` against an unfiltered search.
 
-**`Cannot find module '../../SydneyRealEstateFindings/src/lib/schema'`** — the findings repo is not checked out beside this one. The scripts import its schema by relative path; `FINDINGS_DIR` does not change that.
+**`Cannot find module 'sydney-rental-schema'`** — the findings repo is not checked out beside this one, or has not had `npm install` run in it. This package depends on `file:../SydneyRealEstateFindings/packages/schema`, and that install is what builds the `dist/` the link points at. `FINDINGS_DIR` relocates the data, not the package.
+
+**`the test suites are not built`** — `npm run build`. It builds both configs; `dist-test/` is where `node --test` looks.
 
 **"R2 is not configured — missing … in the pipeline's .env"** — fill the five `R2_*` lines in `.env` (see Photo hosting). `build` and `reset` refuse without them; `validate` only needs them with `--check-remote`.

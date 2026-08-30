@@ -15,17 +15,21 @@ function · `src/mcp.ts` the four-tool adapter · `src/cli.ts` the entry point �
 `src/setup.ts` interactive warm-up · `src/env.ts` loads `.env` first.
 
 `src/stages/` is the run — capture, build, replay, envelope, enrich, validate,
-reset, audit — each a module exporting `main(argv)` that `cli.ts` imports
-compiled. `src/lib/` is their logic (scoring, ledger, search planning,
-walkability, photos/R2). Both were the findings repo's `scripts/` until
-PHASE2.md Steps 2–3 moved them here, pointed them at the
-`sydney-rental-schema` package and gave them entry points; a stage signals
-failure by throwing (`src/lib/stage-error.ts`), never by exiting, so `run` can
-compose them. `scripts/` now holds only the seven checks, still on tsx until
-PHASE2.md Step 6 makes them a `node --test` suite. **Byte-identical replay of
-both committed runs is the invariant** — `node dist/cli.js replay …` for each,
-then `git -C ../SydneyRealEstateFindings diff --stat data/` must print nothing.
-Two compilers: `npm run build` for `src/`, `npm run typecheck` for everything.
+reset, audit, and `run`, which composes them — each a module exporting
+`main(argv)` that `cli.ts` imports compiled. `src/lib/` is their logic
+(scoring, ledger, search planning, walkability, photos/R2). Both were the
+findings repo's `scripts/` until PHASE2.md moved them here, pointed them at the
+`sydney-rental-schema` package and gave them entry points. A stage signals
+failure by **throwing** (`src/lib/stage-error.ts`), never by exiting — that is
+what lets `run` compose them and say which one stopped. `test/` is the former
+`check:*` scripts as `node --test` suites; nothing compiles TypeScript at run
+time, and there is no tsx here.
+
+**Byte-identical replay of both committed runs is the invariant** —
+`node dist/cli.js replay …` for each, then
+`git -C ../SydneyRealEstateFindings diff --stat data/` must print nothing.
+`npm run build` builds both configs (`dist/` and `dist-test/`); `npm test` runs
+the suites; `npm run typecheck` type-checks everything without emitting.
 
 ## After changing server code, run the reload script
 

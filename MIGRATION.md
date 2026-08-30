@@ -551,25 +551,33 @@ schema as a package is Phase 2.
 
 ## Phase 2 — collapse the pipeline into one command (separate plan, after Phase 1 is pushed)
 
+> **Done, 2026-08-30 — see [PHASE2.md](PHASE2.md) and [PHASE2-REPORT.md](PHASE2-REPORT.md).**
+> Seven of the eight items below are struck through because they were carried out there. The
+> one that was not — moving studio flagging to build time — was left out on purpose: it is the
+> only item that changes committed data, so it could not ride along with a phase whose
+> acceptance test is that nothing changes.
+
 Not to be started under this document. Listed so the Phase 1 agent does not do them early:
 
-- `pipeline run` = capture → map → ledger merge → score → photos → write run + knowledge +
+- ~~`pipeline run` = capture → map → ledger merge → score → photos → write run + knowledge +
   index → validate, in one process. Absence resolution and `commentary` remain the two
   human gates (AGENT.md 4d, 9c); the CLI prints the absent listings with their `get_listing`
-  verdicts for Errol to confirm instead of the agent calling MCP by hand.
-- `enrich:walk|travel|transit` become stages of `run`, so a `replay` is no longer needed to
-  put enrichment on the site.
-- Share types between `src/` and `scripts/lib/`; delete the wire-format zod parsers
+  verdicts for Errol to confirm instead of the agent calling MCP by hand.~~ (Step 5)
+- ~~`enrich:walk|travel|transit` become stages of `run`, so a `replay` is no longer needed to
+  put enrichment on the site.~~ (Step 5 — `run` does the replay for you)
+- ~~Share types between `src/` and `scripts/lib/`; delete the wire-format zod parsers
   (`route-places.ts`, `geocode-places.ts`), the JSON round-trip guard from Step 3, and the
-  batch-of-40 in `enrich-transit.ts`.
-- **Share the site's `src/lib/schema` as a package** (workspace or published), replacing
+  batch-of-40 in `enrich-transit.ts`.~~ (Step 4)
+- ~~**Share the site's `src/lib/schema` as a package** (workspace or published), replacing
   the cross-repo relative imports from Step 1 — and with it the requirement that both
-  repos pin the same zod.
-- Fold `scripts/` + `scripts/lib/` into `src/lib/`, and give each stage an exported
-  `main(argv)` so the CLI can import rather than re-launch them.
-- `check:*` → a real test runner.
+  repos pin the same zod.~~ (Steps 1–2 — though the same-zod requirement stays; see ADR 0006)
+- ~~Fold `scripts/` + `scripts/lib/` into `src/lib/`, and give each stage an exported
+  `main(argv)` so the CLI can import rather than re-launch them.~~ (Step 3)
+- ~~`check:*` → a real test runner.~~ (Step 6)
 - Site `src/lib/studio.ts` duplicates `rea.ts` patterns; move studio flagging to build time.
-- Consider whether the MCP adapter is still used; delete if not.
+  **Still open** — the one Phase 2 item deliberately left out; it changes committed data.
+- ~~Consider whether the MCP adapter is still used; delete if not.~~ Kept (Errol, 2026-08-30):
+  AGENT.md §4 still uses its tools interactively, and `run`'s absence gate shares `get_listing`.
 
 ## Inventory (measured 2026-08-30, so the executing agent does not re-survey)
 
