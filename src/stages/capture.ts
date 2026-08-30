@@ -11,7 +11,9 @@ import {
   placesByCanonical,
 } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from '../lib/json-io.js'
-import { callSearchListings, closeBrowser } from '../lib/tools.js'
+import { closeContext } from '../browser.js'
+import type { Listing, SearchResult } from '../types.js'
+import { searchListings } from '../lib/search-listings.js'
 import { planSearchQueries, type SearchQueryGroup } from '../lib/searches.js'
 import { fail, failAfterReport } from '../lib/stage-error.js'
 
@@ -145,10 +147,12 @@ class ReportAccumulator {
 
 // ── one location ─────────────────────────────────────────────────────────────
 
+type FilteredListing = NonNullable<SearchResult['filteredByTravel']>[number]
+
 interface PageOutcome {
-  listings: Array<Record<string, unknown>>
+  listings: Listing[]
   /** What the server rejected on travel time — kept so the ledger can remember it. */
-  filtered: Array<Record<string, unknown>>
+  filtered: FilteredListing[]
   totalResults: number
   totalPages: number
   pagesFetched: number
@@ -167,8 +171,8 @@ async function fetchLocation(
   /** The run's `transit_departure_resolved`; null for road modes, which must not carry a clock. */
   arriveBy: string | null,
 ): Promise<PageOutcome> {
-  const listings: Array<Record<string, unknown>> = []
-  const filtered: Array<Record<string, unknown>> = []
+  const listings: Listing[] = []
+  const filtered: FilteredListing[] = []
   let totalResults = 0
   let totalPages = 0
   let pagesFetched = 0
@@ -189,14 +193,14 @@ async function fetchLocation(
     // traffic-aware SKU at double the price (AGENT.md §4).
     if (group.needsArriveBy) args.travelArriveBy = arriveBy
 
-    let payload: Record<string, unknown>
+    let payload: SearchResult
     try {
-      payload = await callSearchListings(args)
+      payload = await searchListings(args as Parameters<typeof searchListings>[0])
     } catch (error) {
       if (!isBlocked(error)) throw error
       console.log(`      bot block on page ${page}; backing off ${BLOCK_BACKOFF_MS / 1000}s`)
       await sleep(BLOCK_BACKOFF_MS)
-      payload = await callSearchListings(args)
+      payload = await searchListings(args as Parameters<typeof searchListings>[0])
     }
 
     pagesFetched += 1
@@ -204,10 +208,10 @@ async function fetchLocation(
     totalPages = Number(payload.totalPages ?? 0)
     accumulator.add(payload.travelReport as ServerTravelReport | undefined)
 
-    const page_listings = (payload.listings ?? []) as Array<Record<string, unknown>>
+    const page_listings = payload.listings ?? []
     listings.push(...page_listings)
     // Rejected on travel time, after the server paid to geocode and route them.
-    filtered.push(...((payload.filteredByTravel ?? []) as Array<Record<string, unknown>>))
+    filtered.push(...(payload.filteredByTravel ?? []))
 
     if (page >= totalPages) break
     await sleep(PAGE_DELAY_MS)
@@ -293,8 +297,8 @@ export async function main(argv: string[]): Promise<void> {
   try {
     for (const group of plan.groups) {
       const accumulator = new ReportAccumulator()
-      const results: Array<Record<string, unknown>> = []
-      const filtered: Array<Record<string, unknown>> = []
+      const results: Listing[] = []
+      const filtered: FilteredListing[] = []
       console.log(`── ${group.key} (≤${group.maxTravelMinutes} min) ─────────────────`)
 
       const locations = only.size > 0 ? group.locations.filter((l) => only.has(l)) : group.locations
@@ -370,7 +374,7 @@ export async function main(argv: string[]): Promise<void> {
       })
     }
   } finally {
-    await closeBrowser()
+    await closeContext()
   }
 
   const capture = {

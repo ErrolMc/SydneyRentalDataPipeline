@@ -1,100 +1,38 @@
-import { z } from 'zod'
+import type { MislabelledWalk } from '../distance.js'
+import type { Journey } from '../tfnsw.js'
 
 import type { JourneyComposition, MislabelledTravel } from 'sydney-rental-schema'
 
 /**
- * The `route_places` boundary: what the MCP server returns, and how it becomes
- * this repo's shapes.
+ * How a routed answer becomes the ledger's shape.
  *
- * ## Why this is parsed rather than cast
+ * ## Why the router's shapes are not the ledger's shapes
  *
- * It used to be cast. `enrich-travel.ts` declared the response inline as
+ * `distance.ts` speaks camelCase and unrounded minutes; the ledger is
+ * snake_case, and rounds for diff readability (PLAN.md §4 step 9). Neither is
+ * wrong, so the translation lives here rather than either side changing to suit
+ * the other — one file to read when they disagree.
+ *
+ * ## What used to be here, and why it went
+ *
+ * A zod mirror of the wire format, because this was a boundary between two
+ * processes: `enrich-travel.ts` had declared the response inline as
  * `legs: { id, minutes, km }[]` and asserted it with `as typeof report`, which
- * TypeScript is happy to believe — so when the server started returning a
- * measured `journey` on every transit leg, the field arrived on the wire and was
- * dropped on the floor, silently, for as long as nobody looked. This repo kept
- * its own Trip Planner client to re-fetch what it was already being sent.
+ * TypeScript is happy to believe — so when the server began returning a
+ * measured `journey` on every transit leg, the field arrived over stdio and was
+ * dropped on the floor, silently, for as long as nobody looked. A cast cannot
+ * fail; a parse can. That argument was right for a boundary between two
+ * separately versioned repositories.
  *
- * A cast cannot fail. A parse can, which is the entire point at a boundary
- * between two repositories that are versioned separately.
- *
- * ## Why the server's shapes are not this repo's shapes
- *
- * The server speaks camelCase and minutes; the ledger is snake_case, and rounds
- * for diff readability (PLAN.md §4 step 9). Neither is wrong, so the translation
- * lives here rather than either side changing to suit the other — one file to
- * read when they disagree.
+ * It stopped being one. `Journey` and `MislabelledWalk` are imported from the
+ * modules that produce them now, and the compiler checks the same field names
+ * the parser used to — at build time, over the whole call, rather than at run
+ * time over one answer. PHASE2.md Step 4 proved the deletion value-neutral
+ * against a live answer before making it.
  */
 
 const round1 = (n: number): number => Math.round(n * 10) / 10
 
-const ServerJourneyLegSchema = z.object({
-  productClass: z.number().int().nonnegative(),
-  service: z.string().min(1).nullable(),
-  serviceDescription: z.string().min(1).nullable(),
-  from: z.string().min(1),
-  to: z.string().min(1),
-  minutes: z.number().nonnegative(),
-  metres: z.number().nonnegative(),
-})
-
-const ServerJourneySchema = z.object({
-  legs: z.array(ServerJourneyLegSchema).min(1),
-  walkMetres: z.number().nonnegative(),
-  serviceMinutes: z.number().nonnegative(),
-  waitMinutes: z.number().nonnegative(),
-  providerMinutes: z.number().nonnegative(),
-  isWalk: z.boolean(),
-  hasFerry: z.boolean(),
-  interchanges: z.number().int().nonnegative(),
-  metres: z.number().nonnegative(),
-  /**
-   * Both optional because the server's own route cache predates them. An entry
-   * written between its `02150de` and the ferry work has legs but neither of
-   * these, and a composition cannot be built from it — `toComposition` returns
-   * null rather than inventing a `ferry_available: false`, which would read as
-   * "no ferry here" when it means "nobody asked".
-   */
-  ferryAvailable: z.boolean().optional(),
-  walkSpeedKmh: z.number().positive().optional(),
-})
-
-const ServerMislabelledSchema = z.object({
-  actually: z.literal('ferry'),
-  impliedKmh: z.number().positive(),
-  thresholdKmh: z.number().positive(),
-  ferryAvailable: z.literal(true),
-})
-
-export const RoutePlacesReportSchema = z.object({
-  destination: z.object({
-    query: z.string(),
-    lat: z.number(),
-    lng: z.number(),
-    precision: z.enum(['building', 'street', 'area']),
-  }),
-  mode: z.enum(['walk', 'drive', 'transit']),
-  /** Which provider actually answered — `tfnsw` or `google`, not what was configured. */
-  router: z.string(),
-  arriveBy: z.string().nullable(),
-  places: z.number().int().nonnegative(),
-  legs: z.array(
-    z.object({
-      id: z.string().min(1),
-      minutes: z.number().nonnegative(),
-      km: z.number().nonnegative(),
-      journey: ServerJourneySchema.optional(),
-      mislabelled: ServerMislabelledSchema.optional(),
-    }),
-  ),
-  /** Ids with no answer at all. Never a straight line standing in for one. */
-  unroutable: z.array(z.string()),
-  matrixCalls: z.number().int().nonnegative(),
-  cachedLegs: z.number().int().nonnegative(),
-})
-
-export type RoutePlacesReport = z.infer<typeof RoutePlacesReportSchema>
-export type RoutePlacesLeg = RoutePlacesReport['legs'][number]
 
 /**
  * A measured journey as the ledger stores it, or null when the server's answer
@@ -102,7 +40,7 @@ export type RoutePlacesLeg = RoutePlacesReport['legs'][number]
  * walking speed. Null is not a failure — it means re-measure, and the caller
  * says so rather than writing a composition that would be wrong in one field.
  */
-export function toComposition(journey: NonNullable<RoutePlacesLeg['journey']>): JourneyComposition | null {
+export function toComposition(journey: Journey): JourneyComposition | null {
   if (journey.ferryAvailable === undefined || journey.walkSpeedKmh === undefined) return null
   return {
     source: 'tfnsw',
@@ -128,9 +66,7 @@ export function toComposition(journey: NonNullable<RoutePlacesLeg['journey']>): 
 }
 
 /** The server's ferry finding, in the ledger's spelling. */
-export function toMislabelled(
-  evidence: NonNullable<RoutePlacesLeg['mislabelled']>,
-): MislabelledTravel {
+export function toMislabelled(evidence: MislabelledWalk): MislabelledTravel {
   return {
     actually: evidence.actually,
     implied_kmh: evidence.impliedKmh,

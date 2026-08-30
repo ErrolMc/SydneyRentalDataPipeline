@@ -4,11 +4,12 @@ import '../env.js'
 import { readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
-import { SearchesSchema, SiteConfigSchema } from 'sydney-rental-schema'
+import { SearchesSchema, SiteConfigSchema, TravelMode } from 'sydney-rental-schema'
 import { geocodeSuburbs } from '../lib/geocode-places.js'
 import { dataPath, readJsonFile } from '../lib/json-io.js'
 import { failAfterReport } from '../lib/stage-error.js'
-import { callResolveLocation, callRoutePlaces } from '../lib/tools.js'
+import { routePlaces } from '../distance.js'
+import { suggestLocations } from '../search.js'
 import { resolveTransitDeparture } from '../lib/sydney.js'
 
 /**
@@ -126,10 +127,7 @@ export async function main(argv: string[]): Promise<void> {
       const postcode = String(code)
       let found: Array<{ type: string; name?: string; state?: string; postcode?: string }>
       try {
-        found = (await callResolveLocation({
-          query: postcode,
-          max: MAX,
-        })) as typeof found
+        found = await suggestLocations(postcode, MAX)
       } catch (error) {
         console.log(`${postcode}  FAILED — ${(error as Error).message.slice(0, 90)}`)
         continue
@@ -212,7 +210,11 @@ export async function main(argv: string[]): Promise<void> {
   if (stage === 'measure') {
     const site = await readJsonFile(dataPath('config', 'site.json'), SiteConfigSchema)
     const searches = await readJsonFile(dataPath('config', 'searches.json'), SearchesSchema)
-    const modes = (arg('modes') ?? 'walk,drive,transit').split(',').map((m) => m.trim())
+    // Parsed rather than trusted: `routePlaces` takes a TravelMode, and a typo
+    // in --modes should say so here rather than reach the router as a string.
+    const modes = (arg('modes') ?? 'walk,drive,transit')
+      .split(',')
+      .map((m) => TravelMode.parse(m.trim()))
 
     // The same synthetic arrive-by a run uses, so these numbers sit on the same
     // timetable the real transit measurements will.
@@ -241,18 +243,12 @@ export async function main(argv: string[]): Promise<void> {
           continue
         }
 
-        const report = (await callRoutePlaces({
-          places: todo.map((s) => ({ id: s.canonical, lat: s.lat, lng: s.lon })),
-          destination: origin.address,
-          travelMode: mode,
-          ...(mode === 'transit' ? { travelArriveBy: arriveBy } : {}),
-        })) as {
-          legs: Array<{ id: string; minutes: number }>
-          unroutable: string[]
-          matrixCalls: number
-          cachedLegs: number
-          router: string
-        }
+        const report = await routePlaces(
+          todo.map((s) => ({ id: s.canonical, coord: { lat: s.lat, lng: s.lon } })),
+          origin.address,
+          mode,
+          mode === 'transit' ? arriveBy : undefined,
+        )
 
         for (const leg of report.legs) {
           const suburb = byCanonical.get(leg.id)

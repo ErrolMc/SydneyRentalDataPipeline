@@ -5,7 +5,7 @@ import process from 'node:process'
 
 import { CriteriaSchema } from 'sydney-rental-schema'
 import { dataPath, readJsonFile } from '../lib/json-io.js'
-import { callResolveLocation } from '../lib/tools.js'
+import { suggestLocations } from '../search.js'
 
 /**
  * Which REA suburbs sit in the envelope's postcodes, and which of them the
@@ -29,13 +29,7 @@ export async function main(_argv: string[]): Promise<void> {
 
   let missingTotal = 0
   for (const postcode of postcodes) {
-    const found = (await callResolveLocation({ query: postcode, max: 20 })) as Array<{
-      text: string
-      type: string
-      name?: string
-      state?: string
-      postcode?: string
-    }>
+    const found = await suggestLocations(postcode, 20)
 
     const suburbs = found.filter((f) => f.type === 'suburb' || f.type === 'precinct')
     const rows = suburbs.map((s) => {

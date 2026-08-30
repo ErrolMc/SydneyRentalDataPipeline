@@ -1,6 +1,4 @@
-import { z } from 'zod'
-
-import { callGeocodePlaces } from './tools.js'
+import { geocodePlaces } from '../distance.js'
 
 /**
  * The `geocode_places` boundary: asking the MCP server where a suburb is.
@@ -27,24 +25,6 @@ export interface Centroid {
   lon: number
 }
 
-const GeocodeReportSchema = z.object({
-  geocoder: z.string(),
-  places: z.number().int().nonnegative(),
-  results: z.array(
-    z.object({
-      query: z.string(),
-      lat: z.number(),
-      lng: z.number(),
-      precision: z.enum(['building', 'street', 'area']),
-      source: z.enum(['osm', 'google']),
-      cached: z.boolean(),
-    }),
-  ),
-  /** Queries nothing could place. Never a guess standing in for a position. */
-  unresolved: z.array(z.string()),
-  geocodeCalls: z.number().int().nonnegative(),
-})
-
 export interface SuburbQuery {
   /** The caller's own key, so answers match questions without relying on order. */
   id: string
@@ -64,11 +44,9 @@ export async function geocodeSuburbs(places: readonly SuburbQuery[]): Promise<Ma
   const placed = new Map<string, Centroid>()
   if (places.length === 0) return placed
 
-  const report = GeocodeReportSchema.parse(
-    await callGeocodePlaces({
-      queries: places.map((p) => localityQuery(p.suburb, p.postcode, p.state)),
-      prefer: 'locality',
-    }),
+  const report = await geocodePlaces(
+    places.map((p) => localityQuery(p.suburb, p.postcode, p.state)),
+    true,
   )
 
   const byQuery = new Map(report.results.map((r) => [r.query, r]))

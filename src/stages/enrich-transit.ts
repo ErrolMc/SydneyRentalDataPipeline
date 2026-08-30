@@ -5,13 +5,8 @@ import process from 'node:process'
 
 import { LedgerSchema, SiteConfigSchema, travelKey, OFFICE_ORIGIN_ID } from 'sydney-rental-schema'
 import { dataPath, readJsonFile, writeJsonFile, isoNow } from '../lib/json-io.js'
-import { callRoutePlaces } from '../lib/tools.js'
-import {
-  RoutePlacesReportSchema,
-  describeComposition,
-  toComposition,
-  type RoutePlacesReport,
-} from '../lib/route-places.js'
+import { describeComposition, toComposition } from '../lib/route-places.js'
+import { routePlaces, type RoutePlacesReport } from '../distance.js'
 import { fail } from '../lib/stage-error.js'
 import { resolveTransitDeparture } from '../lib/sydney.js'
 
@@ -64,16 +59,6 @@ export async function main(argv: string[]): Promise<void> {
   const FORCE = argv.includes('--force')
   const LIMIT = Number(argv.find((a) => a.startsWith('--limit='))?.slice(8) ?? '') || Infinity
 
-  /**
-   * Listings per `route_places` call.
-   *
-   * The Trip Planner answers one trip per request, so the server works through a
-   * batch serially at ~250ms apiece and a whole ledger in one call would sit well
-   * past `McpClient`'s three-minute timeout. Forty keeps a call around half a
-   * minute and gives the progress below something to report.
-   */
-  const BATCH = 40
-
   const site = await readJsonFile(dataPath('config', 'site.json'), SiteConfigSchema)
   if (!site) fail('data/config/site.json is missing or invalid')
 
@@ -107,8 +92,7 @@ export async function main(argv: string[]): Promise<void> {
     return
   }
   if (DRY_RUN) {
-    const calls = Math.ceil(todo.length / BATCH)
-    console.log(`\nWould send ${todo.length} coordinate(s) in ${calls} route_places call(s).\n`)
+    console.log(`\nWould send ${todo.length} coordinate(s) in one routePlaces call.\n`)
     return
   }
 
@@ -124,70 +108,65 @@ export async function main(argv: string[]): Promise<void> {
   const routers = new Set<string>()
 
   console.log()
-  for (let start = 0; start < todo.length; start += BATCH) {
-    const batch = todo.slice(start, start + BATCH)
-    let report: RoutePlacesReport
-    try {
-      report = RoutePlacesReportSchema.parse(
-        await callRoutePlaces({
-          places: batch.map(([id, entry]) => ({ id, lat: entry.lat!, lng: entry.lon! })),
-          destination: site.office.address,
-          travelMode: 'transit',
-          travelArriveBy: arriveBy,
-        }),
-      )
-    } catch (error) {
-      fail(
-        `route_places failed on listings ${start + 1}–${start + batch.length}: ` +
-          `${(error as Error).message}\n  Nothing was written; re-run to resume from the same place.`,
-      )
+  let report: RoutePlacesReport
+  try {
+    report = await routePlaces(
+      todo.map(([id, entry]) => ({ id, coord: { lat: entry.lat!, lng: entry.lon! } })),
+      site.office.address,
+      'transit',
+      arriveBy,
+    )
+  } catch (error) {
+    fail(
+      `routePlaces failed on ${todo.length} listing(s): ${(error as Error).message}\n` +
+        '  Nothing was written — the ledger is only written once every leg is in.',
+    )
+  }
+
+  routers.add(report.router)
+  tally.unroutable.push(...report.unroutable)
+
+  for (const leg of report.legs) {
+    const entry = ledger.listings[leg.id]
+    if (!entry) continue
+
+    if (!leg.journey) {
+      // A duration with no legs — the server answered from Google, which does
+      // not report them. Recorded as a gap rather than written as a journey.
+      tally.noJourney.push(entry.address)
+      continue
+    }
+    const composition = toComposition(leg.journey)
+    if (!composition) {
+      tally.staleCache.push(entry.address)
+      continue
     }
 
-    routers.add(report.router)
-    tally.unroutable.push(...report.unroutable)
-
-    for (const leg of report.legs) {
-      const entry = ledger.listings[leg.id]
-      if (!entry) continue
-
-      if (!leg.journey) {
-        // A duration with no legs — the server answered from Google, which does
-        // not report them. Recorded as a gap rather than written as a journey.
-        tally.noJourney.push(entry.address)
-        continue
-      }
-      const composition = toComposition(leg.journey)
-      if (!composition) {
-        tally.staleCache.push(entry.address)
-        continue
-      }
-
-      const previous = entry.travel[cacheKey]
-      entry.travel[cacheKey] = {
-        minutes: Math.round(leg.minutes * 10) / 10,
-        km: Math.round(leg.km * 100) / 100,
-        mode: 'transit',
-        // The coordinates are unchanged, so how well the address resolved is too.
-        precision: previous?.precision ?? 'building',
-        composition,
-        computed_at: isoNow(),
-        address: entry.address,
-      }
-
-      tally.measured += 1
-      if (composition.is_walk) tally.walkOnly += 1
-      if (composition.has_ferry) tally.ferry += 1
-      if (composition.interchanges > 0) tally.withInterchange += 1
-
-      const minutes = Math.round(leg.minutes * 10) / 10
-      const was = previous ? `${previous.minutes.toFixed(1)} →` : '   —  '
-      const moved = previous ? minutes - previous.minutes : null
-      console.log(
-        `  ${String(tally.measured).padStart(3)}. ${was}${minutes.toFixed(1).padStart(6)} min` +
-          `${moved === null ? '      ' : (moved > 0 ? ' +' : ' ') + moved.toFixed(1).padStart(5)}` +
-          `  ${describeComposition(composition).slice(0, 34).padEnd(34)} ${entry.address.slice(0, 40)}`,
-      )
+    const previous = entry.travel[cacheKey]
+    entry.travel[cacheKey] = {
+      minutes: Math.round(leg.minutes * 10) / 10,
+      km: Math.round(leg.km * 100) / 100,
+      mode: 'transit',
+      // The coordinates are unchanged, so how well the address resolved is too.
+      precision: previous?.precision ?? 'building',
+      composition,
+      computed_at: isoNow(),
+      address: entry.address,
     }
+
+    tally.measured += 1
+    if (composition.is_walk) tally.walkOnly += 1
+    if (composition.has_ferry) tally.ferry += 1
+    if (composition.interchanges > 0) tally.withInterchange += 1
+
+    const minutes = Math.round(leg.minutes * 10) / 10
+    const was = previous ? `${previous.minutes.toFixed(1)} →` : '   —  '
+    const moved = previous ? minutes - previous.minutes : null
+    console.log(
+      `  ${String(tally.measured).padStart(3)}. ${was}${minutes.toFixed(1).padStart(6)} min` +
+        `${moved === null ? '      ' : (moved > 0 ? ' +' : ' ') + moved.toFixed(1).padStart(5)}` +
+        `  ${describeComposition(composition).slice(0, 34).padEnd(34)} ${entry.address.slice(0, 40)}`,
+    )
   }
 
   console.log(`\n  router   ${[...routers].join(', ') || 'none'}`)

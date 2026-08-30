@@ -14,8 +14,8 @@ import {
 } from 'sydney-rental-schema'
 import { dataPath, readJsonFile, writeJsonFile } from '../lib/json-io.js'
 import { fail } from '../lib/stage-error.js'
-import { callRoutePlaces } from '../lib/tools.js'
-import { RoutePlacesReportSchema, toMislabelled } from '../lib/route-places.js'
+import { routePlaces } from '../distance.js'
+import { toMislabelled } from '../lib/route-places.js'
 
 /**
  * Measure a travel mode the runs never asked for, for listings we already know.
@@ -141,16 +141,13 @@ export async function main(argv: string[]): Promise<void> {
     return
   }
 
-  let report
-  // Parsed, not cast. An inline `as` here is what let the server's measured
-  // journey arrive and be dropped for as long as nobody looked — see
-  // `lib/route-places.ts`.
-  report = RoutePlacesReportSchema.parse(
-    await callRoutePlaces({
-      places: todo.map(([id, entry]) => ({ id, lat: entry.lat!, lng: entry.lon! })),
-      destination: origin.address,
-      travelMode: MODE,
-    }),
+  // Typed by the router itself. This was a zod mirror of the wire format until
+  // PHASE2.md Step 4 — worth having across a process boundary, and worth
+  // deleting across an import, where the compiler checks the same thing.
+  const report = await routePlaces(
+    todo.map(([id, entry]) => ({ id, coord: { lat: entry.lat!, lng: entry.lon! } })),
+    origin.address,
+    MODE,
   )
 
   // Same stamp shape the walkability enricher writes, so the two caches read alike.
