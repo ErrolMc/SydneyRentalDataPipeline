@@ -10,9 +10,11 @@ import { fail } from '../lib/stage-error.js'
 import {
   ReaCaptureSchema,
   excludedByKeyword,
+  flattenCapture,
   reaToRawListing,
   roomSignalEvidence,
   type MappingProblem,
+  type ReaListing,
 } from '../lib/rea.js'
 
 /**
@@ -29,9 +31,10 @@ import {
  *   MISSED?   every listing it did NOT flag whose description still mentions
  *             sharing or rooms — which is where a false negative would hide
  *
- * The second list is the useful one. It is long by design (112 listings on the
- * 2026-08-24 capture) and almost every line should read as a normal flat with
- * a shared laundry or a lounge room. A line that does not is a missing signal.
+ * The second list is the useful one. It is long by design (121 listings on the
+ * 2026-08-24 transit capture, 4 on the walk one) and almost every line should
+ * read as a normal flat with a shared laundry or a lounge room. A line that does
+ * not is a missing signal.
  */
 
 export async function main(argv: string[]): Promise<void> {
@@ -41,16 +44,21 @@ export async function main(argv: string[]): Promise<void> {
   const criteria = await readJsonFile(dataPath('config', 'criteria.json'), CriteriaSchema)
   const capture = ReaCaptureSchema.parse(JSON.parse(readFileSync(CAPTURE_PATH, 'utf8')))
 
-  // Mirror build-run.ts exactly: dedupe, drop keyword matches, then map.
-  const returnedIds = new Set<string>()
+  // Mirror `build` exactly: flatten, drop keyword matches, then map.
+  //
+  // Via `flattenCapture`, because a capture keeps its listings in `groups[]` and
+  // has done since named searches — `capture.results` is the legacy flat array
+  // and every real capture leaves it empty. Reading it here meant this check
+  // reported `0 flagged` on every capture it has ever been pointed at, which is
+  // worse than not having it: AGENT.md §5–9 tells a reader to consult it before
+  // trusting a run. `flattenCapture` also dedupes by id, so the hand-rolled
+  // `returnedIds` filter this used to carry is gone rather than duplicated.
   const problems: MappingProblem[] = []
-  const listings = capture.results
-    .filter((listing) => (returnedIds.has(listing.id) ? false : (returnedIds.add(listing.id), true)))
+  const listings = flattenCapture(capture)
+    .listings.map((item) => item.listing)
     .filter((listing) => !excludedByKeyword(listing, criteria.search.exclude_keywords))
     .map((listing) => ({ rea: listing, raw: reaToRawListing(listing, problems) }))
-    .filter((pair): pair is { rea: (typeof capture.results)[number]; raw: NonNullable<typeof pair.raw> } =>
-      pair.raw !== null,
-    )
+    .filter((pair): pair is { rea: ReaListing; raw: NonNullable<typeof pair.raw> } => pair.raw !== null)
 
   /** Anything that could conceivably be a share signal — deliberately over-broad. */
   const LOOSE = /\bshar\w*|\brooms?\b|\bcommunal\b|\bcommon\b|\bboarding\b|\bkitchenette\b|\bbedsit\b/gi
