@@ -116,7 +116,7 @@ anything unwarmed. Do this before Step 4, not during it.
 ### 0.6 Prove the move worked
 
 ```bash
-npm run typecheck && npm run build && npm test        # 7 suites, 225 assertions
+npm run typecheck && npm run build && npm test        # 7 suites, 233 assertions
 npm run validate:data                                 # 4 known warnings, no errors
 ```
 
@@ -126,11 +126,11 @@ capture files. Fix that before touching anything in §3.
 
 ---
 
-## 1. Where things stand, 2026-08-30
+## 1. Where things stand, 2026-09-01
 
-Four commits have landed since FRESH-RUN.md was written. All are pushed except this file's
-own — check `git log --oneline @{u}..HEAD` in both repos rather than trusting this table, and
-ask Errol before pushing anything, always.
+Six commits have landed since FRESH-RUN.md was written. Everything through `29da69a` is pushed;
+the Steps 1–2 commit below is local. Check `git log --oneline @{u}..HEAD` in both repos rather
+than trusting this table, and ask Errol before pushing anything, always.
 
 | Commit | Repo | What it did |
 |---|---|---|
@@ -138,13 +138,16 @@ ask Errol before pushing anything, always.
 | `43a4832` | findings | `McpCacheSchema` + `cacheExpiry`; cache moved to `data/cache/`; `SuburbProfile.observed_rents`; `FactorScore.source`. |
 | `c7a4e7e` | pipeline | `reset` now empties the route cache (it did not, which was a live bug); the cache is written sorted and reported by `validate`; `build` computes `observed_rents`; `suburbFactor` falls back to them. |
 | `81e2bc2` | pipeline | This file. |
+| `28659b4` | pipeline | §0 — this file survives being read on another machine. |
+| `29da69a` | pipeline | §0.1 — verify the captures are really there, not just listed. |
+| *(local)* | pipeline | **Steps 1 and 2**, and this file's update. Not pushed. |
 
 Current shape:
 
 ```
 src/stages/   13 stages + run.ts, each `export async function main(argv)`
 src/lib/      their logic: scoring, ledger, search planning, walkability, suburbs, photos/R2
-test/         7 node --test suites, 225 assertions
+test/         7 node --test suites, 233 assertions
 ```
 
 **The gates.** Here, before a data commit:
@@ -161,8 +164,11 @@ npm run typecheck && npm run build && npm run check:auth && npm run check:filter
 ```
 
 **The regression invariant.** Replaying both committed runs must leave `git diff --stat data/`
-empty in the findings repo. It still holds as of `c7a4e7e` — run it after every change to
-`src/lib/`:
+empty in the findings repo. It still holds after Steps 1 and 2 — run it after every change to
+`src/lib/`.
+
+Note `git diff --stat` is the test, not `git status`: replay writes LF and the tree holds CRLF,
+so `status` shows both `run.json` files as modified while `diff` correctly sees no change.
 
 `$CAPTURES` is wherever §0 put the capture files — on the machine this was written on,
 `E:/Personal Projects/SydneyRealEstate/captures`.
@@ -181,10 +187,14 @@ say so in the commit rather than quietly letting it fail.
 
 ## 2. Why not just run it now
 
-Three reasons, and the third is the one people underestimate.
+Three reasons, and the third is the one people underestimate. **The first is now closed** —
+Steps 1 and 2 landed on 2026-09-01 — but the other two stand, so the answer is still *not yet*.
 
-**Step 1 is still open.** It is the only remaining item that can *silently corrupt what a run
-claims*, and FRESH-RUN.md §3.1 says to fix it before any fresh capture. It has not been fixed.
+~~**Step 1 is still open.**~~ Done. The thing that could *silently corrupt what a run claims* now
+throws instead. Worth knowing that it was not hypothetical: the archive had already drifted a week
+by the time the check was written (see Step 1). Two consequences for what follows — a pilot must be
+captured and built inside one Tue–Sun window (Step 4), and rebuilding either committed capture now
+needs `--force`.
 
 **Four code paths have never executed** — `capture`'s fetch loop, the absence gate's fetch
 loop, `toComposition`, and the R2 upload inside `build` (FRESH-RUN.md §2). A full 398-location
@@ -211,7 +221,7 @@ Do not extrapolate from them. Measure a cold pilot instead (Step 5).
 
 ## 3. The six steps
 
-### Step 1 — `build` must refuse a capture whose arrive-by is not the one it computed
+### Step 1 — `build` must refuse a capture whose arrive-by is not the one it computed — **done, 2026-09-01**
 
 **Why.** `capture` takes `--arrive-by` and records it on every transit group.
 [build.ts:163](src/stages/build.ts) computes `transitDeparture` **itself** from
@@ -223,21 +233,41 @@ then states an arrive-by that its transit minutes were never measured against �
 precision this project keeps removing, and invisible from the outside because the numbers look
 fine.
 
-**What to change.** After `transitDeparture` is computed and the capture is loaded (both are in
-scope by line 163), compare it against `arrive_by` on every transit group in the capture and
-**throw** on a mismatch, naming both values and both sources. A `--force` escape hatch is fine.
-Silence is not. A group with a null `arrive_by` on a non-transit mode is normal and must not
-trip it.
+**What changed.** `transitArriveByMismatches` in [src/lib/sydney.ts](src/lib/sydney.ts) — a pure
+function over `{origin, mode, arrive_by}[]` plus the resolved moment, so it is testable without a
+capture. [build.ts](src/stages/build.ts) calls it immediately after `transitDeparture` is computed
+and `fail()`s naming both values and both sources. `--force` builds anyway. Walk and drive groups
+are skipped: their null `arrive_by` is normal. A *transit* group with a null is reported, because
+there is no moment to reconcile it against at all. [run.ts](src/stages/run.ts) forwards `--force`
+to `build` alongside `--photos=` and `--local-images`, so a `--resume` that crosses a Monday has a
+way through rather than a wall.
 
-**Verify.** A unit test in `test/` over the comparison, both directions. The replay invariant
-must still hold — neither committed capture has a transit group whose `arrive_by` disagrees
-with what `site.json` produces today, so nothing should move.
+**Verified.** Eight assertions in `test/scoring.test.ts` over both directions (match, week-drifted,
+null, absent, walk, drive, mixed, empty) — 233 tests now, was 225. End to end: the transit capture
+is refused with exit 1, the walk capture builds clean, `--force` builds the transit one.
+
+> **The original verification note here was wrong, and worth reading before you trust the next
+> one.** It said "neither committed capture has a transit group whose `arrive_by` disagrees with
+> what `site.json` produces today, so nothing should move." That was true on 2026-08-30 and false
+> by 2026-09-01: the capture records `2026-09-01T09:00`, and `resolveTransitDeparture` now returns
+> `2026-09-08T09:00`. The drift this step exists to catch had already happened to the project's own
+> archive — which is the argument for the step, not against it.
+>
+> The replay invariant holds anyway, for a reason that does not rot:
+> [replay.ts:347](src/stages/replay.ts) spreads `...previous`, carrying
+> `transit_departure_resolved` over untouched. **`replay` never calls `resolveTransitDeparture`**,
+> so a check inside `build` cannot reach it, whatever the calendar says.
+>
+> The consequence the original note obscured: **`build` now refuses both committed captures**, and
+> will refuse any archived capture more than a few days old. That is correct — the arrive-by really
+> does disagree — but it makes `--force` a requirement for rebuilding from the archive rather than
+> the nicety Step 1 first called it.
 
 **Touches REA or money?** No.
 
 ---
 
-### Step 2 — `check:shares` must read the capture the way `build` does
+### Step 2 — `check:shares` must read the capture the way `build` does — **done, 2026-09-01**
 
 **Why.** [check-shares.ts:47](src/stages/check-shares.ts) reads `capture.results` — the legacy
 flat array, which every capture since named searches leaves empty. So it has reported
@@ -248,15 +278,17 @@ points at a check that cannot see anything.
 You need this working **before** the pilot, not after: it is how you verify the share-house
 classifier against the new capture.
 
-**What to change.** Use `flattenCapture(capture).listings`, as `build` and `audit-capture` do.
-It returns `CapturedListing[]` — `{ listing: ReaListing, travel: Record<string, Travel> }` —
-so the `.map` reaches through `item.listing` rather than taking the row directly.
-`flattenCapture` already dedupes by id, so the `returnedIds` filter in the current chain
-becomes redundant and should go.
+**What changed.** `flattenCapture(capture).listings`, as `build` and `audit-capture` do, mapped
+through `item.listing`. The hand-rolled `returnedIds` filter is gone — `flattenCapture` already
+dedupes by id.
 
-**Verify.** Run it against the committed transit capture. It must report a non-zero flagged
-count where it previously said zero. Cross-check against
-`node dist/cli.js audit capture <file>`, which already flattens correctly.
+**Verified.** Against the committed captures, and it agrees with both other readers of the same
+files:
+
+| | `check:shares` | `audit capture` | `build --dry-run` |
+|---|---|---|---|
+| transit25 | **288 listings, 18 flagged** (was `0`) | 288 | 288 usable |
+| walk15 | **12 listings, 1 flagged** (was `0`) | 12 | 12 usable, 1 share |
 
 **Touches REA or money?** No.
 
@@ -303,6 +335,20 @@ node dist/cli.js run --search \
 
 `--only` restricts the pass; `--core` names what to page to exhaustion. A narrow capture keeps
 the absence gate small too, which is what you want the first time.
+
+**Capture and build inside the same week, or Step 1 will refuse your own pilot.**
+`resolveTransitDeparture` answers "the first Tuesday at least two days out", so it is stable from
+a Tuesday through the Sunday after it and rolls a week forward **every Monday**:
+
+```
+Tue 2026-09-01 → Sun 2026-09-06    resolves to 2026-09-08T09:00:00+10:00
+Mon 2026-09-07 onwards             resolves to 2026-09-15T09:00:00+10:00
+```
+
+Capture on the Sunday and build on the Monday and `build` throws — correctly, because the minutes
+really were measured against the older moment. Get the value from
+`node -e "console.log(require('./dist/lib/sydney.js').resolveTransitDeparture('Tuesday','09:00'))"`
+rather than copying one out of this file; it is a moving target by design.
 
 **What to watch, before resuming:**
 
@@ -405,8 +451,10 @@ Ask before pushing.
 - [ ] **§0** — on a new machine: **both captures on disk with matching sha256**, repos
       siblings, `.env` rebuilt with the new cache path, profile warmed, and the replay
       invariant clean before any code is touched.
-- [ ] **Step 1** — `build` refuses a capture whose transit arrive-by is not the one it computed.
-- [ ] **Step 2** — `check:shares` reports a real number against a group-based capture.
+- [x] **Step 1** — `build` refuses a capture whose transit arrive-by is not the one it computed.
+      Done 2026-09-01; `--force` overrides. Both committed captures are now refused without it.
+- [x] **Step 2** — `check:shares` reports a real number against a group-based capture.
+      Done 2026-09-01: 288/18 on transit25, 12/1 on walk15, agreeing with `audit capture`.
 - [ ] **Step 3** — studio flagging decided with Errol, and done before the run if yes.
 - [ ] **Step 4** — a pilot run, attended, with the absence gate deliberately interrupted once
       and its `gone` map checked. Thrown away afterwards, and said so.
