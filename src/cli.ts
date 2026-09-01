@@ -32,8 +32,8 @@ const ENRICH: Record<string, string> = {
 
 /**
  * The suites under `test/`, run by `node --test` out of `dist-test/`.
- * `shares` and `r2` are not among them: one takes a capture path and the other
- * talks to R2, and neither belongs in a runner invoked with no arguments.
+ * `shares`, `studios` and `r2` are not among them: two take a capture path and
+ * the third talks to R2, and none belongs in a runner invoked with no arguments.
  */
 const SUITES: Record<string, string> = {
   scoring: "scoring",
@@ -43,11 +43,13 @@ const SUITES: Record<string, string> = {
   ledger: "ledger",
   suburbs: "suburbs",
   cache: "cache",
+  studio: "studio",
 };
 
-/** The two that stayed commands, because of an argument and a network. */
+/** The three that stayed commands, because of an argument and a network. */
 const CHECK_STAGES: Record<string, string> = {
   shares: "check-shares",
+  studios: "check-studios",
   r2: "check-r2",
 };
 
@@ -72,8 +74,9 @@ usage: node dist/cli.js <command> [args]
   envelope --stage=…             derive the search envelope (findings repo, ENVELOPE.md)
   enrich walk|travel|transit     add walkability / travel / transit legs to the ledger
   check [name]                   node --test over test/. Default: ${DEFAULT_CHECKS.join(" ")}.
-                                 Also: shares <capture>, r2 — an argument and a
-                                 network, so they are commands, not suites.
+                                 Also: shares <capture>, studios <capture>, r2 —
+                                 an argument and a network, so they are commands,
+                                 not suites.
   validate [--check-remote]      validate the findings repo's data/ (the gate before a commit)
   audit capture <file> | postcodes
   reset [--confirm]              destroy runs, photos and knowledge — dry run without --confirm
@@ -177,7 +180,7 @@ try {
 
     case "check": {
       const name = rest[0];
-      // `check shares <capture>` and `check r2` are commands; the rest are suites.
+      // `check shares|studios <capture>` and `check r2` are commands; the rest are suites.
       if (name && CHECK_STAGES[name]) {
         await runStage(CHECK_STAGES[name], rest.slice(1));
       } else if (name) {

@@ -245,6 +245,11 @@ export function buildListingEntry(options: {
   // and price history and relist tracking depend on it staying in the ledger.
   // The site decides whether to show it.
   if (raw.share_signals.length > 0) flags.push('share_house')
+  // Likewise a studio: REA publishes it, the ledger tracks it, and the site
+  // filters it. `criteria.search.exclude_keywords` used to drop these before
+  // anything saw them — but only the ones REA happened to type `Studio`, so the
+  // ones it typed `Apartment` came through unlabelled. Both arrive now, flagged.
+  if (raw.studio_signals.length > 0) flags.push('studio')
 
   return {
     id: raw.id,
@@ -284,6 +289,7 @@ export function buildListingEntry(options: {
     agent_notes: history.agent_notes,
     flags,
     share_signals: raw.share_signals,
+    studio_signals: raw.studio_signals,
   }
 }
 

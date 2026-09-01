@@ -116,7 +116,7 @@ anything unwarmed. Do this before Step 4, not during it.
 ### 0.6 Prove the move worked
 
 ```bash
-npm run typecheck && npm run build && npm test        # 7 suites, 233 assertions
+npm run typecheck && npm run build && npm test        # 8 suites, 246 assertions
 npm run validate:data                                 # 4 known warnings, no errors
 ```
 
@@ -128,9 +128,9 @@ capture files. Fix that before touching anything in §3.
 
 ## 1. Where things stand, 2026-09-01
 
-Six commits have landed since FRESH-RUN.md was written. Everything through `29da69a` is pushed;
-the Steps 1–2 commit below is local. Check `git log --oneline @{u}..HEAD` in both repos rather
-than trusting this table, and ask Errol before pushing anything, always.
+Everything through the Steps 1–2 commits is pushed. **Step 3 is local and unpushed, in both
+repos**, and it is the one that changes committed data. Check `git log --oneline @{u}..HEAD`
+in both repos rather than trusting this table, and ask Errol before pushing anything, always.
 
 | Commit | Repo | What it did |
 |---|---|---|
@@ -140,14 +140,17 @@ than trusting this table, and ask Errol before pushing anything, always.
 | `81e2bc2` | pipeline | This file. |
 | `28659b4` | pipeline | §0 — this file survives being read on another machine. |
 | `29da69a` | pipeline | §0.1 — verify the captures are really there, not just listed. |
-| *(local)* | pipeline | **Steps 1 and 2**, and this file's update. Not pushed. |
+| `c442730` | pipeline | **Step 1** — `build` refuses a capture measured against a different arrive-by. |
+| `b3f3cad` | pipeline | **Step 2** — `check:shares` reads the capture's groups, not the legacy flat array. |
+| `dc02da3` | pipeline | Steps 1–2 recorded here; Step 1's expired premise replaced. |
+| *(local)* | both | **Step 3** — studios are in, labelled. Changes committed data. Not pushed. |
 
 Current shape:
 
 ```
-src/stages/   13 stages + run.ts, each `export async function main(argv)`
+src/stages/   14 stages + run.ts, each `export async function main(argv)`
 src/lib/      their logic: scoring, ledger, search planning, walkability, suburbs, photos/R2
-test/         7 node --test suites, 233 assertions
+test/         8 node --test suites, 246 assertions
 ```
 
 **The gates.** Here, before a data commit:
@@ -164,8 +167,9 @@ npm run typecheck && npm run build && npm run check:auth && npm run check:filter
 ```
 
 **The regression invariant.** Replaying both committed runs must leave `git diff --stat data/`
-empty in the findings repo. It still holds after Steps 1 and 2 — run it after every change to
-`src/lib/`.
+empty in the findings repo. **Step 3 broke it deliberately and re-established it** — the flags
+it added are now part of what a replay reproduces, so from here the invariant holds again against
+the post-Step-3 data. Run it after every change to `src/lib/`.
 
 Note `git diff --stat` is the test, not `git status`: replay writes LF and the tree holds CRLF,
 so `status` shows both `run.json` files as modified while `diff` correctly sees no change.
@@ -188,7 +192,7 @@ say so in the commit rather than quietly letting it fail.
 ## 2. Why not just run it now
 
 Three reasons, and the third is the one people underestimate. **The first is now closed** —
-Steps 1 and 2 landed on 2026-09-01 — but the other two stand, so the answer is still *not yet*.
+Steps 1, 2 and 3 landed on 2026-09-01 — but the other two stand, so the answer is still *not yet*.
 
 ~~**Step 1 is still open.**~~ Done. The thing that could *silently corrupt what a run claims* now
 throws instead. Worth knowing that it was not hypothetical: the archive had already drifted a week
@@ -294,27 +298,66 @@ files:
 
 ---
 
-### Step 3 — decide studio flagging with Errol, and if yes, do it now
+### Step 3 — studio flagging — **decided and done, 2026-09-01: studios are in, labelled**
 
-**Why.** The site's `src/lib/studio.ts` classifies studios from `description_snippet` — the 500
-characters a run keeps. The pipeline's `src/lib/rea.ts` has the **full description** at map
-time. `studio.ts`'s own notes say the snippet undercounts and name the fix: move the patterns
-into `rea.ts`, add `studio` to `ListingFlag`, replay.
+**The premise was wrong, and measuring it changed the decision.** Step 3 originally proposed
+moving the site's prose patterns to map time so they could read the full description instead of
+the 500-character snippet. Measured, that is worth **+2 listings in 265** — the run goes from 35
+studios to 37. The justification borrowed the share classifier's "24 listings carry their only
+signal past that cut"; the real figure for shares is 5 listings (24 is close to the 21 extra
+*signals* across 18 listings, which is likely what was counted), and the studio analogue is 2.
 
-It is cheaper before the run than after. Do it now and it lands in the new data for free; do it
-later and it needs its own replay and its own data commit.
+What the measurement turned up instead:
 
-**This is the one step that changes committed data**, which is why it is a decision and not a
-task. It will move the numbers, and the replay invariant will fail on purpose.
+**REA does have a `Studio` property type.** `studio.ts` opened by asserting the opposite — "REA
+has no studio category… of the three structured fields a filter could use, none of them can find
+one", and `exclude_keywords` "catches zero studios". In the 2026-08-24 transit capture, **30 of
+335 unique listings carry `propertyType: "Studio"`**. `criteria.search.exclude_keywords` listed
+`studio` and `excludedByKeyword` matches the property type, so all 30 were dropped before
+anything saw them — while the 44 REA typed `Apartment`/`Unit`/`Flat` came through and got a
+badge. Same kind of property, opposite treatment, decided by REA's data entry.
 
-**What to change.** Patterns into `src/lib/rea.ts` at map time; `studio` added to `ListingFlag`
-in the findings repo's `packages/schema/src/listing-enums.ts`; the site's `studio.ts` reads the
-flag instead of re-deriving it.
+**Errol's call: studios are in, labelled.** Not excluded — the site already has a studio badge
+and a facet filter, so the filtering belongs there, in front of a human, rather than in a
+keyword list that only half worked.
 
-**Verify.** Replay both captures and read the diff — do not restore it blindly. The listings
-that gained a `studio` flag should be ones a human agrees are studios. Say in the commit that
-the invariant broke and why. Re-establish it: after the change, replaying twice must still be
-byte-identical to itself.
+**What changed.**
+
+| | |
+|---|---|
+| `criteria.json` | `studio` out of `exclude_keywords`; **v6 → v7** |
+| `searches.json` | `office-walk-15` gains `other` to its `property_types`, or it would still drop them (`mapPropertyType` sends `Studio` → `other`); **v8 → v9**. Admits 30 studios and 1 literal `Other` |
+| `packages/schema` | `studio` on `ListingFlag`; `studio_signals: string[]` on `ListingEntry`, mirroring `share_signals` |
+| `src/lib/studio.ts` (new, pipeline) | the site's patterns, unchanged, plus a `rea_property_type` signal; runs at map time over the full description |
+| site `src/lib/studio.ts` | now a *reader* over `studio_signals` — no patterns left |
+| `check studios` | new pipeline command over a capture (the quotes); the findings one now reads back what a run committed |
+
+**Both sources are needed, which is why the flag is a union.** Ten of the 30 REA-typed studios
+never say the word anywhere in the description — prose alone would have let every one of them
+back in unlabelled. And 40 in the capture are prose-only, typed as something else. The property
+type is evaluated *independently of the negation guard*: an ad reading "not a studio" while REA
+types it `Studio` is a disagreement worth surfacing, not a reason to discard the structured
+field.
+
+**Verified.**
+
+- `check studios` over the transit capture: **70 flagged — 30 typed, 40 prose-only**. Three
+  unflagged listings still mention the word, and all three are correct: two yoga studios and
+  `438892060`, the "true one bedroom (not a studio)" ad the original file cited as the reason
+  never to substring-match.
+- **The invariant broke on purpose**: 37 listings in `2026-08-25a` and 2 in `2026-08-24a`
+  gained the flag. Nothing else moved — same ids, same prices, same composite scores, verified
+  field by field.
+- **Re-established**: replaying twice after the change is byte-identical to itself.
+- 246 assertions (was 233); a new `check studio` suite pins the mechanical halves — the type
+  signal, its independence from the prose, and the negation guard.
+
+**One thing this does not do.** The 30 typed studios **do not appear in the committed runs**, and
+cannot. [replay.ts:131](src/stages/replay.ts) reads `previous.criteria_snapshot` — "the run's own
+snapshot, not today's" — and line 161 filters to ids already in the run. Both are deliberate:
+adding listings to a past run would be inventing history. So `check:studios` on `2026-08-25a`
+reports `0 because REA typed it that way`, and **the config change first bites on the fresh
+run** — which is Step 6, and is where to check it landed.
 
 **Touches REA or money?** No.
 
@@ -401,8 +444,13 @@ and `build` handles several, so capture with `--arrive-by` set and **no `--searc
 and both `office-walk-15` and `train-25` get answered by one run. That is what clears
 `validate` warning #2.
 
+**Check the studios landed.** Step 3 lifted the `studio` keyword exclusion, and that change
+cannot show up in a replay — this is the first run where it bites. `check studios <capture>`
+should report a non-zero count in its "typed Studio by REA" column, and `npm run check:studios`
+on the new run should agree. If both say zero, the exclusion is still in force somewhere.
+
 **You do not need all 398 locations.** What makes the committed runs stale is that they answered
-**criteria v5 / searches v6** while config is now **v6 / v8** — not coverage. A run over the 82
+**criteria v5 / searches v6** while config is now **v7 / v9** — not coverage. A run over the 82
 locations transit already covered plus the walk 25 would answer both searches on current
 config, exercise the absence gate against a real ledger, and cost a fraction of a full envelope
 pass. FRESH-RUN.md §8 asks only for "a deliberate and stated share of the envelope". Full
@@ -455,11 +503,14 @@ Ask before pushing.
       Done 2026-09-01; `--force` overrides. Both committed captures are now refused without it.
 - [x] **Step 2** — `check:shares` reports a real number against a group-based capture.
       Done 2026-09-01: 288/18 on transit25, 12/1 on walk15, agreeing with `audit capture`.
-- [ ] **Step 3** — studio flagging decided with Errol, and done before the run if yes.
+- [x] **Step 3** — studio flagging decided with Errol, and done before the run.
+      Decided 2026-09-01: **studios are in, labelled**, not excluded. `criteria.json` v7,
+      `searches.json` v9, `studio` on `ListingFlag`, classifier moved to the pipeline.
+      Invariant broken on purpose (39 listings gained the flag) and re-established.
 - [ ] **Step 4** — a pilot run, attended, with the absence gate deliberately interrupted once
       and its `gone` map checked. Thrown away afterwards, and said so.
 - [ ] **Step 5** — a cold-cache cost for the intended envelope share, agreed with Errol.
-- [ ] **Step 6** — one capture answering **both** searches on criteria v6 / searches v8, over a
+- [ ] **Step 6** — one capture answering **both** searches on criteria v7 / searches v9, over a
       deliberate and stated share of the envelope, with `--photos=8`.
 - [ ] Both gates green, `validate --check-remote` clean, and its first two warnings gone.
 - [ ] The site read on a phone and judged to look right — not just to pass its checks.

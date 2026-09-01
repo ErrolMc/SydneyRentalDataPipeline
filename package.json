@@ -37,7 +37,8 @@
     "check:transit": "node dist/cli.js check transit",
     "check:r2": "node dist/cli.js check r2",
     "reset:data": "node dist/cli.js reset",
-    "test": "node dist/cli.js check"
+    "test": "node dist/cli.js check",
+    "check:studios": "node dist/cli.js check studios"
   },
   "engines": {
     "node": ">=20"

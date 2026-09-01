@@ -49,6 +49,13 @@ export interface RawListing {
   share_signals: string[]
 
   /**
+   * Why this reads as a studio — one room, no separate bedroom — empty when it
+   * does not. See `studioSignalEvidence` in `lib/studio.ts`; `buildListingEntry`
+   * turns a non-empty list into the `studio` flag.
+   */
+  studio_signals: string[]
+
+  /**
    * Routed times by `<origin-id>:<mode>`, merged across every query pass that
    * returned this listing. A missing key means unroutable, which a search reads
    * as "does not match" rather than "close".

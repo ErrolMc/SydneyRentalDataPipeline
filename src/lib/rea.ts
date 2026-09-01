@@ -8,6 +8,7 @@ import {
   type Travel,
 } from 'sydney-rental-schema'
 import type { RawListing } from './raw.js'
+import { studioListingSignals } from './studio.js'
 
 /**
  * Mapping the search library's `Listing` (src/types.ts) onto the shape a run needs.
@@ -418,6 +419,10 @@ export function reaToRawListing(
     // Read off the *full* description, which only exists here — a run keeps
     // 500 characters of it and the evidence is often past that cut.
     share_signals: roomListingSignals(listing),
+
+    // Same reasoning, plus REA's own `Studio` property type, which the site
+    // could never see either: it maps to `other` and the distinction was lost.
+    studio_signals: studioListingSignals(listing),
 
     travel,
 
