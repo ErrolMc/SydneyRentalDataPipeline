@@ -18,7 +18,12 @@ import {
   scoreListing,
   unenrichedBlock,
 } from '../src/lib/score.js'
-import { allocateRunId, resolveTransitDeparture, sydneyToday } from '../src/lib/sydney.js'
+import {
+  allocateRunId,
+  resolveTransitDeparture,
+  sydneyToday,
+  transitArriveByMismatches,
+} from '../src/lib/sydney.js'
 
 test('scoring', async (t) => {
   /**
@@ -261,6 +266,61 @@ test('scoring', async (t) => {
   check('  it is at least 2 days out', departure.slice(0, 10) >= sydneyToday(), true)
   console.log(`        resolved → ${departure}`)
   check('run id suffix advances past taken ids', allocateRunId([`${sydneyToday()}a`, `${sydneyToday()}b`]), `${sydneyToday()}c`)
+
+  /**
+   * `build` refuses a capture measured against a different arrive-by than the one
+   * it computed. The failure this guards against is silent — the transit minutes
+   * look perfectly normal, they are just answers to a question the run does not
+   * state — so both directions are asserted: a match must stay quiet, and every
+   * shape of mismatch must be named.
+   */
+  console.log('\narrive-by drift')
+  const AB = '2026-09-08T09:00:00+10:00'
+  const OTHER = '2026-09-15T09:00:00+10:00'
+  const transit = (arrive_by: string | null | undefined, origin = 'office') => ({
+    origin,
+    mode: 'transit',
+    arrive_by,
+  })
+
+  check('the arrive-by it computed → nothing to report', transitArriveByMismatches([transit(AB)], AB), [])
+  check(
+    '  a week out because the build crossed a Monday → named, both values',
+    transitArriveByMismatches([transit(OTHER)], AB),
+    [{ origin: 'office', arriveBy: OTHER }],
+  )
+  check(
+    '  a transit group captured without --arrive-by → nothing to reconcile, so also named',
+    transitArriveByMismatches([transit(null)], AB),
+    [{ origin: 'office', arriveBy: null }],
+  )
+  check(
+    '  and an absent arrive_by reads the same as an explicit null',
+    transitArriveByMismatches([transit(undefined)], AB),
+    [{ origin: 'office', arriveBy: null }],
+  )
+
+  // A walk or drive group is not measured against a clock. Its null is normal and
+  // must not trip the check — otherwise every capture with a walk group throws.
+  check(
+    'a walk group carries no arrive-by, and that is not drift',
+    transitArriveByMismatches([{ origin: 'office', mode: 'walk', arrive_by: null }], AB),
+    [],
+  )
+  check(
+    '  nor does a drive group',
+    transitArriveByMismatches([{ origin: 'office', mode: 'drive', arrive_by: null }], AB),
+    [],
+  )
+  check(
+    '  a mixed capture reports only its transit half',
+    transitArriveByMismatches(
+      [{ origin: 'office', mode: 'walk', arrive_by: null }, transit(OTHER, 'station')],
+      AB,
+    ),
+    [{ origin: 'station', arriveBy: OTHER }],
+  )
+  check('an empty capture has no drift', transitArriveByMismatches([], AB), [])
 
   console.log('\n(assertions below)\n')
 

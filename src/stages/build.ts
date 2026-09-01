@@ -48,13 +48,13 @@ import {
   placesBySuburbKey,
   stubSuburb,
 } from '../lib/suburbs.js'
-import { allocateRunId, resolveTransitDeparture } from '../lib/sydney.js'
+import { allocateRunId, resolveTransitDeparture, transitArriveByMismatches } from '../lib/sydney.js'
 
 /**
  * Protocol steps 2, 3, 5, 7, 8 and 9 (PLAN.md §4), driven from a capture file
  * the agent produced in step 4.
  *
- *   node dist/cli.js build <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx]
+ *   node dist/cli.js build <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx] [--force]
  *
  * Everything here is deterministic apart from the image downloads and the
  * clock, so re-running the same capture after fixing a bug reproduces the same
@@ -83,13 +83,17 @@ export async function main(argv: string[]): Promise<void> {
   const DRY_RUN = argv.includes('--dry-run')
   const RUN_ID_OVERRIDE = argv.find((arg) => arg.startsWith('--run-id='))?.slice(9)
   const LOCAL_IMAGES = argv.includes('--local-images')
+  /** Build a capture whose transit arrive-by is not the one computed here anyway. */
+  const FORCE = argv.includes('--force')
   const PHOTOS_PER_LISTING = Number(
     argv.find((a) => a.startsWith('--photos='))?.slice(9) ?? DEFAULT_PHOTOS_PER_LISTING,
   )
   const CAPTURE_PATH = argv[0]
 
   if (!CAPTURE_PATH) {
-    fail('usage: node dist/cli.js build <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx] [--local-images]')
+    fail(
+      'usage: node dist/cli.js build <capture.json> [--dry-run] [--run-id=YYYY-MM-DDx] [--local-images] [--force]',
+    )
   }
 
   // ── step 2: load ───────────────────────────────────────────────────────────
@@ -164,6 +168,37 @@ export async function main(argv: string[]): Promise<void> {
     site.commute_assumption.transit.day_of_week,
     site.commute_assumption.transit.arrive_by,
   )
+
+  // The capture measured its transit minutes against the arrive-by it was given
+  // at capture time; the line above computed that moment again, independently,
+  // and `run.json` is about to publish this one as `transit_departure_resolved`.
+  // If they are not the same moment the run states a precision it never had, and
+  // nothing downstream can tell — the minutes look fine either way.
+  const arriveByDrift = transitArriveByMismatches(capture.groups, transitDeparture)
+  if (arriveByDrift.length > 0 && !FORCE) {
+    fail(
+      [
+        'this capture was not measured against the arrive-by this build computed.',
+        '',
+        `  build computes  ${transitDeparture}`,
+        `    from site.json commute_assumption.transit — ${site.commute_assumption.transit.day_of_week} ${site.commute_assumption.transit.arrive_by}`,
+        '',
+        '  the capture records:',
+        ...arriveByDrift.map(
+          (group) =>
+            `    ${group.origin}:transit  ${group.arriveBy ?? '(none — captured without --arrive-by)'}`,
+        ),
+        '',
+        '  resolveTransitDeparture returns the next matching weekday at least two days',
+        '  out, so its answer rolls a week forward every Monday. A capture taken on one',
+        '  side of that boundary and built on the other reports transit minutes measured',
+        '  against a moment the run does not name.',
+        '',
+        `  Re-capture with --arrive-by=${transitDeparture}, or pass --force to build it`,
+        '  anyway — and say so in the commit, because the run cannot say it for you.',
+      ].join('\n'),
+    )
+  }
 
   // ── step 3: allocate the run id ────────────────────────────────────────────
   const existingRunIds = index?.runs.map((run) => run.id) ?? []

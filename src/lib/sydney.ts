@@ -97,3 +97,34 @@ export function allocateRunId(existingIds: readonly string[], now: Date = new Da
 
   throw new Error(`[run-id] all 26 suffixes for ${date} are taken — that cannot be right`)
 }
+
+/**
+ * Transit groups whose recorded `arrive_by` is not the moment just computed.
+ *
+ * `capture` is handed its arrive-by on the command line and stamps it on every
+ * transit group; `build` computes the same moment again from
+ * `site.commute_assumption` and writes it to `run.json` as
+ * `transit_departure_resolved`. Nothing used to compare the two.
+ *
+ * They drift. `resolveTransitDeparture` returns the next matching weekday at
+ * least two days out, so its answer is stable from a Tuesday through the Sunday
+ * after it and then rolls a week forward every Monday. Capture on one side of
+ * that boundary and build on the other and the run publishes an arrive-by its
+ * transit minutes were never measured against — fake precision that looks
+ * perfectly fine from the outside, which is exactly why it gets checked rather
+ * than trusted.
+ *
+ * Only transit groups are considered: a walk or drive group is not measured
+ * against a clock and its null `arrive_by` is normal. A *transit* group with no
+ * arrive-by is not normal — there is no moment to reconcile it against at all —
+ * so it is reported too, with a null to say which case it is.
+ */
+export function transitArriveByMismatches(
+  groups: readonly { origin: string; mode: string; arrive_by?: string | null }[],
+  resolved: string,
+): { origin: string; arriveBy: string | null }[] {
+  return groups
+    .filter((group) => group.mode === 'transit')
+    .map((group) => ({ origin: group.origin, arriveBy: group.arrive_by ?? null }))
+    .filter((group) => group.arriveBy !== resolved)
+}

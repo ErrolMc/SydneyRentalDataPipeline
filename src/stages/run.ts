@@ -222,7 +222,12 @@ export async function main(argv: string[]): Promise<void> {
   const NO_ENRICH = argv.includes('--no-enrich')
   const RUN_ID_OVERRIDE = argv.find((a) => a.startsWith('--run-id='))?.slice(9)
   const CAPTURE_ARG = argv.find((a) => a.startsWith('--capture='))?.slice(10)
-  const PASS_THROUGH = argv.filter((a) => a.startsWith('--photos=') || a === '--local-images')
+  // `--force` is here because `build` refuses a capture whose transit arrive-by
+  // is not the one it computes, and that moment rolls forward every Monday — so a
+  // `--resume` that crosses a weekend needs a way through that `run` can offer.
+  const PASS_THROUGH = argv.filter(
+    (a) => a.startsWith('--photos=') || a === '--local-images' || a === '--force',
+  )
 
   const previous = RESUME ? await readState() : null
   if (RESUME && !previous) {
