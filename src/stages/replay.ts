@@ -24,6 +24,7 @@ import {
   type MappingProblem,
 } from '../lib/rea.js'
 import { matchesSearch, type SearchCandidate } from '../lib/searches.js'
+import { providerWarnings } from '../lib/warnings.js'
 
 /**
  * Rebuild an existing run from the capture it came from, after a mapping fix.
@@ -42,10 +43,18 @@ import { matchesSearch, type SearchCandidate } from '../lib/searches.js'
  * copied across untouched:
  *
  *   run_id · created_at · agent · criteria_snapshot · searches_snapshot
- *   transit_departure_resolved · provider_report · commentary
+ *   transit_departure_resolved · commentary
  *   per listing: listing_state · first_seen_run · price_change · images
  *                · agent_notes
  *   per search: considered · locations_searched · travel report
+ *
+ * `provider_report` used to be on that list and should not have been. Its
+ * `warnings` describe the listings, and the listings are rebuilt here — so the
+ * note about missing enrichment is recomputed (`lib/warnings.ts`) while the
+ * notes that really are history, such as which locations a partial search
+ * queried, are kept. Carrying the whole thing across is what left the
+ * 2026-09-03 walk run telling its readers that walkability was unavailable,
+ * through the very replay that gave it walkability.
  *
  * `enrichment` is derived, not carried: its commute half comes from the
  * capture's own routed times and its walkability half from the ledger, which is
@@ -297,9 +306,23 @@ export async function main(argv: string[]): Promise<void> {
 
   }
 
+  // `provider_report` is not a listing field, so it misses the per-field tally
+  // below — and a replay that rewrote only the notes would otherwise report
+  // "nothing" and then write a different file, which is the kind of silent
+  // change this script exists to make visible.
+  const notesBefore = previous.provider_report?.warnings ?? []
+  const notesAfter = providerWarnings(listings, notesBefore)
+  const notesChanged = !same(notesBefore, notesAfter)
+
   console.log('\n  changed')
-  if (changedBy.size === 0 && left.length === 0) {
+  if (changedBy.size === 0 && left.length === 0 && !notesChanged) {
     console.log('    nothing — the mapping already produces the committed run')
+  }
+  if (notesChanged) {
+    console.log(
+      `    provider notes       ${notesBefore.length} → ${notesAfter.length}` +
+        `   (enrichment note ${notesAfter.length < notesBefore.length ? 'dropped' : 'rewritten'})`,
+    )
   }
   for (const [field, ids] of [...changedBy].sort((a, b) => b[1].length - a[1].length)) {
     const sample = `${ids.slice(0, 4).join(', ')}${ids.length > 4 ? ' …' : ''}`
@@ -357,6 +380,12 @@ export async function main(argv: string[]): Promise<void> {
       price_drops: countOf('price_drop'),
       relisted: countOf('relisted'),
     },
+    // Derived, for the same reason `summary` above is: it describes the
+    // listings, and the listings have just been rebuilt. Carrying it across
+    // untouched is what left the 2026-09-03 run insisting its walkability was
+    // missing through the very replay that supplied it. The notes that *are*
+    // history — which locations were queried — survive inside `providerWarnings`.
+    provider_report: { ...previous.provider_report, warnings: notesAfter },
     listings,
   }
 

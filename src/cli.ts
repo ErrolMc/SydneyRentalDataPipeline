@@ -45,6 +45,7 @@ const SUITES: Record<string, string> = {
   cache: "cache",
   studio: "studio",
   capture: "capture",
+  warnings: "warnings",
 };
 
 /** The three that stayed commands, because of an argument and a network. */

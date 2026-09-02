@@ -49,6 +49,7 @@ import {
   stubSuburb,
 } from '../lib/suburbs.js'
 import { allocateRunId, resolveTransitDeparture, transitArriveByMismatches } from '../lib/sydney.js'
+import { providerWarnings } from '../lib/warnings.js'
 
 /**
  * Protocol steps 2, 3, 5, 7, 8 and 9 (PLAN.md §4), driven from a capture file
@@ -539,18 +540,16 @@ export async function main(argv: string[]): Promise<void> {
   const countOf = (state: ListingEntry['listing_state']) =>
     listings.filter((listing) => listing.listing_state === state).length
 
-  const warnings = [
-    'Enrichment has not run for this milestone, so commute times and walkability are ' +
-      'unavailable for every listing. Six of the nine scoring factors sat out of the ' +
-      'composite and confidence is correspondingly low — scores are hidden on the site ' +
-      'and listings are ordered by rent instead.',
-  ]
+  // Notes about history, which no later replay can work out for itself. The
+  // enrichment note is not one of them — it describes the listings, which a
+  // replay rebuilds — so `providerWarnings` derives that one and puts it first.
+  const history: string[] = []
 
   // A run carries the full criteria snapshot, so a partial search has to say so
   // — otherwise the file claims coverage it does not have, and a later
   // run-vs-run diff reads the unsearched suburbs as listings that disappeared.
   if (partialSearch) {
-    warnings.push(
+    history.push(
       `Partial search: ${searched.length} of ${criteria.search.locations.length} configured ` +
         `locations were queried (${searched.join(', ')}). Listings from the remaining ` +
         `${criteria.search.locations.length - searched.length} are absent because they were ` +
@@ -577,7 +576,7 @@ export async function main(argv: string[]): Promise<void> {
       relisted: countOf('relisted'),
       leased_since_last_run: goneCount,
     },
-    provider_report: { warnings },
+    provider_report: { warnings: providerWarnings(listings, history) },
     commentary: capture.commentary,
     listings,
   }
