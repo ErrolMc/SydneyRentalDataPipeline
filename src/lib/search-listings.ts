@@ -1,10 +1,13 @@
 import { z } from "zod";
 
+import type { MislabelledTravel } from "sydney-rental-schema";
+
 import { fetchPage } from "../browser.js";
-import { enrichWithTravel, type TravelMode } from "../distance.js";
+import { enrichWithTravel, type MislabelledWalk, type TravelMode } from "../distance.js";
 import { parseSearchPage } from "../parse.js";
 import { buildSearchUrl } from "../search.js";
-import type { Channel, SearchParams, SearchResult } from "../types.js";
+import type { Channel, Listing, SearchParams, SearchResult } from "../types.js";
+import { toMislabelled } from "./route-places.js";
 
 /**
  * `search_listings` as a plain function.
@@ -83,6 +86,38 @@ export const SearchListingsInput = z.object({
 export type SearchListingsArgs = z.input<typeof SearchListingsInput>;
 
 /**
+ * Translate the one camelCase shape `enrichWithTravel` leaves behind.
+ *
+ * `enrichWithTravel` is generic over `Locatable`, so its writes are checked
+ * against `distance.ts`'s own `Travel` and never against the listing type they
+ * land on — a `Listing.travel` that does not declare `mislabelled` at all still
+ * receives one. Nothing downstream reads it in TypeScript, so the mismatch is
+ * invisible until `ReaCaptureSchema` parses the capture back and rejects
+ * `impliedKmh` where it wants `implied_kmh`.
+ *
+ * This is the boundary where a routed answer becomes a listing, so the
+ * translation belongs here for the reason route-places.ts's header gives:
+ * distance.ts speaks camelCase, everything downstream is snake_case, and
+ * neither side should change to suit the other.
+ *
+ * Run in place and before `maxTravelMinutes` splits the array, so the rejects
+ * recorded in `filteredByTravel` — which is where all 59 of them were in the
+ * 2026-09-03 walk capture — carry the same shape as the ones kept.
+ */
+export function normaliseMislabelled(listings: readonly Listing[]): void {
+  for (const listing of listings) {
+    const travel = listing.travel as ({ mislabelled?: MislabelledWalk } & object) | null | undefined;
+    const evidence = travel?.mislabelled;
+    // Keyed off the camelCase field rather than a boolean, so running twice
+    // cannot turn a translated shape back into an untranslated one — reading
+    // `impliedKmh` off an already-translated object yields `undefined`, which
+    // would produce a `mislabelled` the schema rejects for a different reason.
+    if (!evidence || !("impliedKmh" in evidence)) continue;
+    (travel as { mislabelled?: MislabelledTravel }).mislabelled = toMislabelled(evidence);
+  }
+}
+
+/**
  * Search realestate.com.au, optionally with routed travel times from `travelFrom`.
  * Throws on a failed fetch or a bot block; a routing outage is reported inside
  * the result instead, so it never costs the caller the listings.
@@ -107,6 +142,8 @@ export async function searchListings(input: SearchListingsArgs): Promise<SearchR
         mode,
         params.travelArriveBy,
       );
+
+      normaliseMislabelled(result.listings);
 
       if (params.maxTravelMinutes != null) {
         const limit = params.maxTravelMinutes;

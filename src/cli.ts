@@ -44,6 +44,7 @@ const SUITES: Record<string, string> = {
   suburbs: "suburbs",
   cache: "cache",
   studio: "studio",
+  capture: "capture",
 };
 
 /** The three that stayed commands, because of an argument and a network. */
