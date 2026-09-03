@@ -428,10 +428,22 @@ async function checkRouteCache(): Promise<void> {
 }
 
 /**
- * A gap in the local mirror means one of two very different things. On a fresh
- * clone there is simply no mirror — the folder is gitignored — and that is not
- * a problem, because R2 serves the site. A *partial* mirror is a problem: it
- * means files went missing on the machine that produces runs.
+ * A gap in the local mirror means one of three things, and only one is a fault.
+ *
+ * On a fresh clone there is no mirror at all — the folder is gitignored — and
+ * that is fine, because R2 is what serves the site.
+ *
+ * A *partial* mirror used to be a hard `fail()` per missing path regardless, and
+ * `--check-remote` did not suppress it. That is backwards: the mirror is a local
+ * convenience, the bucket is the thing the site reads, and `--check-remote` HEADs
+ * every path in it. So a machine that built run 2 without run 1's photos — which
+ * is the normal state when two machines share a repo — could not pass the commit
+ * gate even with every photo demonstrably present in R2.
+ *
+ * So when the remote check has run, a local gap is a warning: `checkRemotePhotos`
+ * is the authority and fails on its own for anything genuinely absent from the
+ * bucket, which is the fault worth stopping a commit for. Without it there is
+ * nothing to appeal to, and a partial mirror stays an error.
  */
 async function checkLocalMirror(): Promise<void> {
   if (missingLocally.length === 0) return
@@ -445,7 +457,21 @@ async function checkLocalMirror(): Promise<void> {
     return
   }
 
+  if (CHECK_REMOTE) {
+    warn(
+      `${missingLocally.length} photo path(s) missing from the local mirror — ` +
+        'checking R2 instead, which is what the site serves. Photos absent from the ' +
+        'bucket are reported separately and do stop a commit.',
+    )
+    return
+  }
+
   for (const message of missingLocally) fail(message)
+  fail(
+    'the local mirror is incomplete. If these photos are in R2 — normal when another ' +
+      'machine built an earlier run — re-run with --check-remote, which verifies the ' +
+      'bucket rather than this disk.',
+  )
 }
 
 /** HEAD every distinct photo in R2. This is what actually proves the site can render a run. */
