@@ -24,7 +24,7 @@ import {
   placesByCanonical,
 } from 'sydney-rental-schema'
 import { computeConfigHash } from '../lib/config-hash.js'
-import { buildListingEntry, sortListings } from '../lib/entry.js'
+import { buildListingEntry, listingFlags, sortListings } from '../lib/entry.js'
 import { geocodeSuburbs, type Centroid } from '../lib/geocode-places.js'
 import { syncListingImages } from '../lib/images.js'
 import { dataPath, isoNow, readJsonFile, sortRecord, writeJsonFile } from '../lib/json-io.js'
@@ -40,7 +40,12 @@ import {
   type MappingProblem,
 } from '../lib/rea.js'
 import { unenrichedBlock } from '../lib/score.js'
-import { evaluateSearches, planSearchQueries, type SearchCandidate } from '../lib/searches.js'
+import {
+  evaluateSearches,
+  excludedByEverySearch,
+  planSearchQueries,
+  type SearchCandidate,
+} from '../lib/searches.js'
 import {
   centroidCorrections,
   observedRents,
@@ -142,9 +147,10 @@ export async function main(argv: string[]): Promise<void> {
    * `buildSearchHistory` reads as "not asked" rather than "found nothing".
    */
   const capturedKeys = new Set(capture.groups.map((group) => `${group.origin}:${group.mode}`))
-  const covered = searches.searches
-    .filter((search) => capturedKeys.has(`${search.commute.origin}:${search.commute.mode}`))
-    .map((search) => search.id)
+  const coveredSearches = searches.searches.filter((search) =>
+    capturedKeys.has(`${search.commute.origin}:${search.commute.mode}`),
+  )
+  const covered = coveredSearches.map((search) => search.id)
 
   const { groups, problems: planProblems } = planSearchQueries(
     searches,
@@ -260,12 +266,51 @@ export async function main(argv: string[]): Promise<void> {
   if (keywordSkips.length > 0) {
     console.log(`  excluded    ${keywordSkips.length} by keyword: ${keywordSkips.slice(0, 5).join(', ')}`)
   }
+  /**
+   * Listings no search this capture covered can match, decided on flags alone.
+   *
+   * Worth knowing here rather than at step 7, because everything between the two
+   * costs something: these listings are about to have their photos downloaded,
+   * resized twice and pushed to R2, and then `replay` will drop them from the
+   * run because they matched nothing. Run 2026-09-03a paid for eight photos of a
+   * $500 room let that never appeared on the site.
+   *
+   * Flags are the only filter that can be decided this early — see
+   * `listingFlags` for why a partial flag set is safe for exclusion and not for
+   * matching.
+   */
+  const unmatchable = new Set(
+    results
+      .filter((raw) =>
+        excludedByEverySearch(
+          coveredSearches,
+          listingFlags({ raw, criteria, enrichment: null, photoCount: null }),
+        ),
+      )
+      .map((raw) => raw.id),
+  )
+
   const roomLets = results.filter((raw) => raw.share_signals.length > 0)
   if (roomLets.length > 0) {
+    // Say which of the two things is actually happening. The flag never drops a
+    // listing from the *ledger* — price history and relist tracking depend on it
+    // staying there — but every search listing `share_house` in `exclude_flagged`
+    // refuses it, and a listing no covered search matches does not enter the run.
+    // Claiming "not dropped" flatly is how a $500 listing came to be absent from
+    // 2026-09-03a with nothing in the log to say why.
+    const held = roomLets.filter((raw) => unmatchable.has(raw.id))
     console.log(
       `  share      ${roomLets.length} listing(s) look like a room, not a dwelling — ` +
-        'flagged share_house, not dropped (npm run check:shares for the evidence)',
+        'flagged share_house, kept in the ledger (npm run check:shares for the evidence)',
     )
+    if (held.length > 0) {
+      const one = held.length === 1
+      console.log(
+        `             ${held.length} of those ${one ? 'matches' : 'match'} no search this run ` +
+          `asked, so ${one ? 'it stays' : 'they stay'} out of the run and ` +
+          `${one ? 'its photos are' : 'their photos are'} not fetched`,
+      )
+    }
   }
   for (const problem of problems) {
     console.log(`  ⚠ skipped   ${problem.id}: ${problem.reason}`)
@@ -407,11 +452,22 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   // ── step 8: images ─────────────────────────────────────────────────────────
-  console.log(`\n  ${results.length} listing(s) — syncing photos`)
+  //
+  // `unmatchable` listings are skipped: step 7 is about to drop them from the
+  // run, so every byte fetched here is spent on something no page will render.
+  // They stay in the ledger with whatever photos they already had, because the
+  // flag that excludes them is a fact about this config and not about the
+  // listing — loosen `exclude_flagged` and the next build fetches them.
+  const toSync = merged.filter((item) => !unmatchable.has(item.raw.id))
+  const unmatchableCount = merged.length - toSync.length
+  console.log(
+    `\n  ${toSync.length} listing(s) — syncing photos` +
+      (unmatchableCount > 0 ? ` (${unmatchableCount} skipped, matched no search)` : ''),
+  )
   let downloadedTotal = 0
   let skippedListings = 0
 
-  for (const item of merged) {
+  for (const item of toSync) {
     const entry = nextLedger[item.raw.id]
 
     if (DRY_RUN) {

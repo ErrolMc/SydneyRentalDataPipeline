@@ -149,6 +149,65 @@ function mergeTravel(
   return merged
 }
 
+/**
+ * Every flag a listing carries, in one place because two callers need different
+ * amounts of it.
+ *
+ * `buildListingEntry` has everything and asks for the full set. `build`'s image
+ * step runs *before* the providers have answered and before a single photo has
+ * been fetched, and needs to know what a listing will be excluded for while
+ * those are still unknown — so it passes `enrichment: null` and
+ * `photoCount: null`, and the two flags that depend on them are left off.
+ *
+ * That partial answer is safe in one direction only, and that is the direction
+ * `build` uses it. No filter admits a listing *for* carrying a flag —
+ * `exclude_flagged` only ever rejects — so adding the remaining flags can narrow
+ * what a listing matches but never widen it. "Excluded by every search on these
+ * flags" therefore stays true once the rest arrive. "Matched" would not, and
+ * must not be decided from here.
+ *
+ * The order is deliberate: `flags` is compared field-wise by `replay`, so
+ * reordering it would report every listing as changed.
+ */
+export function listingFlags(options: {
+  raw: RawListing
+  criteria: Criteria
+  /** Null while the providers have not answered yet. */
+  enrichment: Enrichment | null
+  /** Null while photos have not been fetched yet. */
+  photoCount: number | null
+}): ListingFlag[] {
+  const { raw, criteria, enrichment, photoCount } = options
+  const flags: ListingFlag[] = []
+  if (raw.area_sqm === null) flags.push('no_sqm')
+  if (raw.price_pw === null) flags.push('no_price')
+  if (raw.lat === null || raw.lon === null) flags.push('no_latlon')
+  // Derived rather than assumed, so it stops being true on its own as providers
+  // start answering — which both now do, so on a fully enriched run this fires
+  // only for a listing nobody could place. `none_found` and `fallback` are real
+  // answers; only `unavailable` is a gap.
+  if (enrichment !== null && unavailableProviders(enrichment).length > 0) {
+    flags.push('enrichment_incomplete')
+  }
+  if (photoCount !== null && photoCount === 0) flags.push('images_failed')
+  if (
+    raw.price_pw !== null &&
+    raw.price_pw < criteria.search.target_price_pw * SUSPICIOUSLY_CHEAP_RATIO
+  ) {
+    flags.push('suspiciously_cheap')
+  }
+  // Flagged, never dropped: a room let is still a listing REA is publishing,
+  // and price history and relist tracking depend on it staying in the ledger.
+  // The site decides whether to show it.
+  if (raw.share_signals.length > 0) flags.push('share_house')
+  // Likewise a studio: REA publishes it, the ledger tracks it, and the site
+  // filters it. `criteria.search.exclude_keywords` used to drop these before
+  // anything saw them — but only the ones REA happened to type `Studio`, so the
+  // ones it typed `Apartment` came through unlabelled. Both arrive now, flagged.
+  if (raw.studio_signals.length > 0) flags.push('studio')
+  return flags
+}
+
 export function buildListingEntry(options: {
   raw: RawListing
   criteria: Criteria
@@ -225,31 +284,12 @@ export function buildListingEntry(options: {
     thumb: listingImagePath(raw.id, file.replace(/\.webp$/, '.thumb.webp')),
   }))
 
-  const flags: ListingFlag[] = []
-  if (raw.area_sqm === null) flags.push('no_sqm')
-  if (raw.price_pw === null) flags.push('no_price')
-  if (raw.lat === null || raw.lon === null) flags.push('no_latlon')
-  // Derived rather than assumed, so it stops being true on its own as providers
-  // start answering — which both now do, so on a fully enriched run this fires
-  // only for a listing nobody could place. `none_found` and `fallback` are real
-  // answers; only `unavailable` is a gap.
-  if (unavailableProviders(enrichment).length > 0) flags.push('enrichment_incomplete')
-  if (photos.length === 0) flags.push('images_failed')
-  if (
-    raw.price_pw !== null &&
-    raw.price_pw < criteria.search.target_price_pw * SUSPICIOUSLY_CHEAP_RATIO
-  ) {
-    flags.push('suspiciously_cheap')
-  }
-  // Flagged, never dropped: a room let is still a listing REA is publishing,
-  // and price history and relist tracking depend on it staying in the ledger.
-  // The site decides whether to show it.
-  if (raw.share_signals.length > 0) flags.push('share_house')
-  // Likewise a studio: REA publishes it, the ledger tracks it, and the site
-  // filters it. `criteria.search.exclude_keywords` used to drop these before
-  // anything saw them — but only the ones REA happened to type `Studio`, so the
-  // ones it typed `Apartment` came through unlabelled. Both arrive now, flagged.
-  if (raw.studio_signals.length > 0) flags.push('studio')
+  const flags = listingFlags({
+    raw,
+    criteria,
+    enrichment,
+    photoCount: photos.length,
+  })
 
   return {
     id: raw.id,

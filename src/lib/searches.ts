@@ -291,6 +291,29 @@ export function matchesSearch(search: Search, candidate: SearchCandidate): boole
   return true
 }
 
+/**
+ * True when every one of these searches refuses the listing on its flags alone.
+ *
+ * A flag exclusion is the one filter nothing else can rescue: price, beds and
+ * routed time are all irrelevant once `exclude_flagged` matches. So a listing
+ * every covered search excludes this way is already known to match nothing, and
+ * `build` can skip fetching its photos rather than paying R2 for a listing the
+ * next step discards.
+ *
+ * Empty is **false**, not vacuously true. A run that covered no searches keeps
+ * every listing (`replay` filters on `!hasSearches || matched`), so "no searches
+ * exclude it" must not read as "all of them do".
+ */
+export function excludedByEverySearch(
+  searches: readonly Search[],
+  flags: readonly string[],
+): boolean {
+  if (searches.length === 0) return false
+  return searches.every((search) =>
+    (search.filters.exclude_flagged ?? []).some((flag) => flags.includes(flag)),
+  )
+}
+
 export interface EvaluationInput {
   searches: Searches
   groups: SearchQueryGroup[]

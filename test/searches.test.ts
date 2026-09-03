@@ -21,6 +21,7 @@ import {
 import { dataPath, readJsonFile } from '../src/lib/json-io.js'
 import {
   evaluateSearches,
+  excludedByEverySearch,
   matchesSearch,
   planSearchQueries,
   resolveSearchLocations,
@@ -172,6 +173,34 @@ test('searches', async (t) => {
     matchesSearch(noShares, candidate({ flags: ['no_sqm', 'enrichment_incomplete'] })),
     true,
   )
+
+  // ── excluded before its photos are paid for ──────────────────────────────────
+  //
+  // `build` skips fetching photos for a listing no covered search can match, so
+  // the predicate has to be exactly as strict as `matchesSearch` on flags — and
+  // must refuse to answer "excluded" when there is nothing to be excluded by.
+  const noStudios = search({ id: 'b', filters: { exclude_flagged: ['studio'] } })
+  check('excluded by the only search', excludedByEverySearch([noShares], ['share_house']), true)
+  check('excluded by both searches', excludedByEverySearch([noShares, noShares], ['share_house']), true)
+  check(
+    'one search still admits it, so not excluded',
+    excludedByEverySearch([noShares, noStudios], ['share_house']),
+    false,
+  )
+  check(
+    'excluded by each search for a different flag',
+    excludedByEverySearch([noShares, noStudios], ['share_house', 'studio']),
+    true,
+  )
+  check('an unflagged listing is never excluded', excludedByEverySearch([noShares], []), false)
+  check(
+    'a search with no exclusions excludes nothing',
+    excludedByEverySearch([search({ id: 'c' })], ['share_house']),
+    false,
+  )
+  // Empty must be false, not vacuously true: a run covering no searches keeps
+  // every listing, so "no search excludes it" cannot read as "all of them do".
+  check('no searches at all is not exclusion', excludedByEverySearch([], ['share_house']), false)
 
   const flats = search({ id: 'a', filters: { property_types: ['apartment', 'unit'] } })
   check('listed type passes', matchesSearch(flats, candidate({ property_type: 'unit' })), true)
