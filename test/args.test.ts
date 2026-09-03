@@ -4,7 +4,14 @@ import assert from 'node:assert/strict'
 // Must stay first: fills process.env from this package's `.env` (see src/env.ts).
 import '../src/env.js'
 
-import { assertKnownFlags, numericFlag } from '../src/lib/args.js'
+import {
+  BUILD_FLAGS,
+  CAPTURE_FLAGS,
+  RUN_FLAGS,
+  assertKnownFlags,
+  forwardFlags,
+  numericFlag,
+} from '../src/lib/args.js'
 
 test('args', async (t) => {
   /** See the note in the other suites: recorded now, asserted as subtests below. */
@@ -27,18 +34,10 @@ test('args', async (t) => {
    * The real invocations, verbatim.
    *
    * This is the half that matters. Rejecting unknown flags is only safe if the
-   * commands actually used still pass, and `run` forwards its entire flag list
-   * to `capture` — so a flag `run` never reads itself must still be accepted.
-   * These are the exact shapes RUN-BOTH.md tells an operator to type.
+   * commands actually used still pass. `run` accepts capture's flags as well as
+   * its own, and forwards each stage only what that stage reads. These are the
+   * exact shapes RUN-BOTH.md tells an operator to type.
    */
-  const RUN_FLAGS = [
-    'dry-run', 'resume', 'search', 'skip-absence', 'no-enrich', 'check-remote',
-    'run-id', 'capture', 'photos', 'local-images', 'force',
-    'out', 'core', 'probe-pages', 'arrive-by', 'only', 'searches',
-  ]
-  const BUILD_FLAGS = ['dry-run', 'run-id', 'local-images', 'force', 'photos']
-  const CAPTURE_FLAGS = ['out', 'core', 'probe-pages', 'arrive-by', 'only', 'searches']
-
   console.log('\nthe real invocations still pass\n')
 
   const walkCapture = [
@@ -78,9 +77,36 @@ test('args', async (t) => {
     'run --resume --force, for the Monday boundary',
     threw(() => assertKnownFlags(['--resume', '--force', '--photos=8'], RUN_FLAGS, 'run')) === null,
   )
+  /**
+   * The one that matters, and the one an earlier version of this file got wrong
+   * by hand-filtering the list before asserting on it — which tested the
+   * assumption instead of the call. `run` really does hand these to `capture`,
+   * so the forwarding is part of what is under test. Getting this wrong stopped
+   * run 2's capture dead at the first line.
+   */
+  for (const [label, invocation] of [
+    ['walk', walkCapture],
+    ['transit', transitCapture],
+  ] as const) {
+    const forwarded = forwardFlags(invocation, CAPTURE_FLAGS)
+    check(
+      `capture accepts exactly what run forwards it (${label})`,
+      threw(() => assertKnownFlags(forwarded, CAPTURE_FLAGS, 'capture')) === null,
+      forwarded.join(' '),
+    )
+    check(
+      `and run's own flags are not forwarded (${label})`,
+      !forwarded.includes('--search') && !forwarded.some((f) => f.startsWith('--photos=')),
+      forwarded.join(' '),
+    )
+  }
   check(
-    'capture accepts what run forwards to it',
-    threw(() => assertKnownFlags(walkCapture.filter((a) => a !== '--search' && a !== '--photos=8'), CAPTURE_FLAGS, 'capture')) === null,
+    'the capture still receives the arguments it needs',
+    forwardFlags(transitCapture, CAPTURE_FLAGS).some((f) => f.startsWith('--out=')) &&
+      forwardFlags(transitCapture, CAPTURE_FLAGS).some((f) => f.startsWith('--core=')) &&
+      forwardFlags(transitCapture, CAPTURE_FLAGS).some((f) => f.startsWith('--arrive-by=')) &&
+      forwardFlags(transitCapture, CAPTURE_FLAGS).some((f) => f.startsWith('--searches=')),
+    forwardFlags(transitCapture, CAPTURE_FLAGS).join(' '),
   )
   check(
     'build --dry-run --photos=8',

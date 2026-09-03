@@ -18,6 +18,26 @@ import { fail } from './stage-error.js'
  * therefore checked before a stage does any work.
  */
 
+/** Everything `capture` reads. */
+export const CAPTURE_FLAGS = ['out', 'core', 'probe-pages', 'arrive-by', 'only', 'searches'] as const
+
+/** Everything `build` reads. */
+export const BUILD_FLAGS = ['dry-run', 'run-id', 'local-images', 'force', 'photos'] as const
+
+/**
+ * Everything `run` reads, plus everything it forwards.
+ *
+ * `run` is the only stage a person types directly, so it has to accept the
+ * flags of the stages it drives — but it must then hand each stage only the
+ * flags that stage reads. Forwarding its whole list made `capture` reject
+ * `--search` and `--photos`, which are `run`'s own. Use `forwardFlags`.
+ */
+export const RUN_FLAGS = [
+  'dry-run', 'resume', 'search', 'skip-absence', 'no-enrich', 'check-remote',
+  'run-id', 'capture', 'photos', 'local-images', 'force',
+  ...CAPTURE_FLAGS,
+] as const
+
 /** The name out of `--name` or `--name=value`. Anything else is not a flag. */
 function flagName(token: string): string | null {
   if (!token.startsWith('--')) return null
@@ -59,9 +79,11 @@ function editDistance(a: string, b: string): number {
 /**
  * Refuses any `--flag` the stage does not read.
  *
- * `known` is the union of what this stage reads and what it forwards — `run`
- * hands every `--` token to `capture`, so it must accept capture's flags too or
- * this would reject the very arguments it is passing on.
+ * `known` is what this stage reads. A stage that drives others accepts their
+ * flags too (`RUN_FLAGS`), but must hand each one only what it reads —
+ * `forwardFlags` does that. Forwarding the lot is what made `capture` refuse
+ * `--search` and `--photos`, which are `run`'s own and which capture had until
+ * then been silently ignoring.
  */
 export function assertKnownFlags(
   argv: readonly string[],
@@ -88,6 +110,21 @@ export function assertKnownFlags(
       '  which on a live capture is discovered far too late.',
     ].join('\n'),
   )
+}
+
+/**
+ * The subset of `argv` a downstream stage actually reads.
+ *
+ * The counterpart to `assertKnownFlags`: once a stage refuses flags it does not
+ * know, whatever drives it must stop passing them. Positional arguments are
+ * dropped — every caller supplies those itself.
+ */
+export function forwardFlags(argv: readonly string[], known: readonly string[]): string[] {
+  const allowed = new Set(known)
+  return argv.filter((token) => {
+    const name = flagName(token)
+    return name !== null && allowed.has(name)
+  })
 }
 
 /**

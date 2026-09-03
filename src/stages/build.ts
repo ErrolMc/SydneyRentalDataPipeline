@@ -23,7 +23,7 @@ import {
   type Suburbs,
   placesByCanonical,
 } from 'sydney-rental-schema'
-import { assertKnownFlags, numericFlag } from '../lib/args.js'
+import { assertKnownFlags, BUILD_FLAGS, numericFlag } from '../lib/args.js'
 import { computeConfigHash } from '../lib/config-hash.js'
 import { buildListingEntry, listingFlags, sortListings } from '../lib/entry.js'
 import { geocodeSuburbs, type Centroid } from '../lib/geocode-places.js'
@@ -86,8 +86,6 @@ import { providerWarnings } from '../lib/warnings.js'
  */
 const DEFAULT_PHOTOS_PER_LISTING = 1
 
-/** Everything `build` reads. Anything else is a typo, and typos here are silent. */
-const BUILD_FLAGS = ['dry-run', 'run-id', 'local-images', 'force', 'photos'] as const
 
 export async function main(argv: string[]): Promise<void> {
   const DRY_RUN = argv.includes('--dry-run')
