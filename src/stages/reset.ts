@@ -5,8 +5,8 @@ import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 
-import { McpCacheSchema } from 'sydney-rental-schema'
-import { dataPath, isoNow, readJsonFile, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
+import { readCacheFile } from '../lib/cache-file.js'
+import { dataPath, isoNow, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
 import { fail } from '../lib/stage-error.js'
 import { deleteObject, listObjects, r2ConfigFromEnv } from '../lib/r2.js'
 
@@ -105,10 +105,20 @@ export async function main(argv: string[]): Promise<void> {
 
   // Read before anything is destroyed, so the dry run can say what a real one
   // would cost. A route and a geocode are both money already spent.
-  const cached = await readJsonFile(dataPath('cache', 'mcp-cache.json'), McpCacheSchema).catch(() => null)
-  const routeCount = cached ? Object.keys(cached.routes).length : 0
-  const geoCount = cached ? Object.keys(cached.geo).length : 0
+  // Counted from the JSON, not from the schema. A `""` key in `geo` — which one
+  // address-less listing is enough to create — makes `McpCacheSchema` refuse the
+  // file, and refusing used to read as an empty cache. That is how this line
+  // once said "0 route(s), 0 position(s)" immediately before destroying 406 of
+  // each: the warning about spending real money read zero exactly when it was
+  // most true.
+  const cacheRead = await readCacheFile(dataPath('cache', 'mcp-cache.json'))
+  const routeCount = cacheRead.state === 'missing' ? 0 : cacheRead.routes
+  const geoCount = cacheRead.state === 'missing' ? 0 : cacheRead.positions
   console.log(`  cache       ${routeCount} route(s), ${geoCount} position(s) — re-measuring these costs real money`)
+  if (cacheRead.state === 'unreadable') {
+    console.log(`              ⚠ the file does not match its schema (${cacheRead.reason})`)
+    console.log('              counted from the JSON instead — the numbers above are real')
+  }
 
   if (!CONFIRM) {
     console.log(

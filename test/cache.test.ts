@@ -7,7 +7,8 @@ import '../src/env.js'
 import process from 'node:process'
 
 import { GOOGLE_GEO_TTL_DAYS, McpCacheSchema, cacheExpiry, type McpCache } from 'sydney-rental-schema'
-import { dataPath, readJsonFile } from '../src/lib/json-io.js'
+import { readCacheFile } from '../src/lib/cache-file.js'
+import { dataPath } from '../src/lib/json-io.js'
 
 test('cache', async (t) => {
   /** See the note in the other suites: recorded now, asserted as subtests below. */
@@ -93,23 +94,100 @@ test('cache', async (t) => {
 
   /* --- what is actually committed -------------------------------------------- */
 
-  const cache = await readJsonFile(dataPath('cache', 'mcp-cache.json'), McpCacheSchema).catch(() => null)
+  const read = await readCacheFile(dataPath('cache', 'mcp-cache.json'))
+
+  // ── telling absence from corruption ──────────────────────────────────────────
+  //
+  // The distinction this whole module exists for. Every reader used to collapse
+  // the two, so a cache the schema refused was reported as a cache that was not
+  // there — and the counts, which are the part that decides whether destroying
+  // it costs money, read zero.
+  {
+    const { mkdtemp, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = await mkdtemp(join(tmpdir(), 'cache-read-'))
+
+    const missing = await readCacheFile(join(dir, 'nope.json'))
+    check('a file that is not there reads as missing', missing.state === 'missing', missing.state)
+
+    const goodPath = join(dir, 'good.json')
+    await writeFile(
+      goodPath,
+      JSON.stringify({ routes: { 'walk|x|a|b': { minutes: 5, km: 0.4 } }, geo: { 'a st': { lat: -33.8, lng: 151.2, precision: 'building' } } }),
+    )
+    const good = await readCacheFile(goodPath)
+    check(
+      'a valid cache reads as ok, counted',
+      good.state === 'ok' && good.routes === 1 && good.positions === 1,
+      good.state,
+    )
+
+    const poisonedPath = join(dir, 'poisoned.json')
+    await writeFile(
+      poisonedPath,
+      JSON.stringify({
+        routes: { 'walk|x|a|b': { minutes: 5, km: 0.4 } },
+        geo: {
+          'a st': { lat: -33.8, lng: 151.2, precision: 'building' },
+          '': { lat: -25.274398, lng: 133.775136, precision: 'area', src: 'google' },
+        },
+      }),
+    )
+    const poisoned = await readCacheFile(poisonedPath)
+    check(
+      'an empty-keyed entry reads as unreadable, not missing',
+      poisoned.state === 'unreadable',
+      poisoned.state,
+    )
+    check(
+      'and is still counted honestly',
+      poisoned.state === 'unreadable' && poisoned.routes === 1 && poisoned.positions === 2,
+      poisoned.state === 'unreadable' ? `${poisoned.routes}/${poisoned.positions}` : poisoned.state,
+    )
+    check(
+      'and names the empty key as the cause',
+      poisoned.state === 'unreadable' && poisoned.badKeys.length === 1,
+      poisoned.state === 'unreadable' ? JSON.stringify(poisoned.badKeys) : poisoned.state,
+    )
+
+    const brokenPath = join(dir, 'broken.json')
+    await writeFile(brokenPath, '{not json')
+    const broken = await readCacheFile(brokenPath)
+    check('invalid JSON is unreadable, not missing', broken.state === 'unreadable', broken.state)
+  }
 
   console.log('\ncommitted cache\n')
-  if (!cache) {
+  if (read.state === 'missing') {
     // Not a failure. `.env` may point the cache at a home directory, which is
     // the default and a perfectly good place for it.
     console.log('  no cache at data/cache/mcp-cache.json — .env points elsewhere')
     check('nothing to check', true)
+  } else if (read.state === 'unreadable') {
+    // This is the branch that used to not exist. A cache the schema refuses read
+    // as `null`, took the "no cache" path above, printed ".env points elsewhere"
+    // about a file sitting right there, and passed — so the one assertion that
+    // would have caught it was unreachable exactly when it was true. A committed
+    // cache of 407 routes went through this gate green.
+    console.log(`  ${read.routes} route(s) · ${read.positions} position(s) — present but unreadable`)
+    console.log(`  ${read.reason}`)
+    if (read.badKeys.length > 0) {
+      console.log(
+        `  ${read.badKeys.length} entr(y/ies) keyed on an empty string — an address-less ` +
+          'listing geocoded, which Google answers with the centroid of Australia',
+      )
+    }
+    check('the committed cache parses against its schema', false, read.reason)
   } else {
-    const routes = Object.keys(cache.routes).length
-    const positions = Object.keys(cache.geo).length
+    const { cache } = read
     const expiry = cacheExpiry(cache, Date.now())
-    console.log(`  ${routes} route(s) · ${positions} position(s) · ${expiry.google} from Google`)
+    console.log(
+      `  ${read.routes} route(s) · ${read.positions} position(s) · ${expiry.google} from Google`,
+    )
     if (expiry.expired || expiry.expiringSoon) {
       console.log(`  ${expiry.expired} expired · ${expiry.expiringSoon} expiring within a week`)
     }
-    if (routes === 0 && positions === 0) {
+    if (read.routes === 0 && read.positions === 0) {
       console.log('  (empty — a fresh capture pays full price for every geocode and routed leg)')
     }
     check('the committed cache parses against its schema', true)

@@ -759,6 +759,14 @@ export async function resolveOrigin(query: string): Promise<GeoResult> {
 type GeocodeHit = GeoResult & { src: "osm" | "google"; cached: boolean };
 
 async function geocodeCached(query: string, wantLocality = false): Promise<GeocodeHit | null> {
+  // An empty address is not a place, and asking anyway is expensive twice over.
+  // Google answers `""` with Australia's own centroid (-25.274398, 133.775136)
+  // — a plausible-looking coordinate for a listing that has none — and the
+  // result is cached under the key `""`, which `McpCacheSchema` rejects, so one
+  // address-less listing makes the whole cache file fail to parse. Unplaceable
+  // is the honest answer, and it is free.
+  if (query.trim() === "") return null;
+
   const c = loadCache();
   // Namespaced, for the same reason `transit:tfnsw` is: the two preferences ask
   // different questions of the same string, and letting one answer satisfy the

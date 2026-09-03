@@ -11,7 +11,6 @@ import {
   GOOGLE_GEO_TTL_DAYS,
   IndexSchema,
   LedgerSchema,
-  McpCacheSchema,
   RunSchema,
   SearchesSchema,
   SiteConfigSchema,
@@ -19,6 +18,7 @@ import {
   cacheExpiry,
   type Run,
 } from 'sydney-rental-schema'
+import { readCacheFile } from '../lib/cache-file.js'
 import { DATA_DIR, PUBLIC_DIR, dataPath, readJsonFile } from '../lib/json-io.js'
 import { objectExists, objectKeyFor, r2ConfigFromEnv } from '../lib/r2.js'
 import { StageError, fail as stop, failAfterReport } from '../lib/stage-error.js'
@@ -379,16 +379,33 @@ async function validate(): Promise<void> {
  * the file had no schema and the gate never looked at it at all.
  */
 async function checkRouteCache(): Promise<void> {
-  const cache = await readJsonFile(dataPath('cache', 'mcp-cache.json'), McpCacheSchema).catch(() => null)
+  const read = await readCacheFile(dataPath('cache', 'mcp-cache.json'))
 
-  if (!cache) {
+  if (read.state === 'missing') {
     // Absent is not an error. `.env` may point the cache at a home directory,
     // which is the default and a perfectly good place for it.
     return
   }
 
-  const routes = Object.keys(cache.routes).length
-  const positions = Object.keys(cache.geo).length
+  if (read.state === 'unreadable') {
+    // Distinguished from absent, because conflating the two is what made this
+    // gate silent about a committed cache of 407 routes: the line was simply not
+    // printed, so the tell was an absence rather than a zero. A cache the schema
+    // refuses is also a cache nothing else can read.
+    warn(
+      `cache/mcp-cache.json holds ${read.routes} route(s) and ${read.positions} position(s) ` +
+        `but does not match its schema (${read.reason})` +
+        (read.badKeys.length > 0
+          ? ` — ${read.badKeys.length} entr(y/ies) keyed on an empty string, which is what an ` +
+            'address-less listing geocodes to'
+          : ''),
+    )
+    return
+  }
+
+  const { cache } = read
+  const routes = read.routes
+  const positions = read.positions
   const expiry = cacheExpiry(cache, Date.now())
 
   console.log(
