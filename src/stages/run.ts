@@ -331,7 +331,12 @@ export async function main(argv: string[]): Promise<void> {
               `  The gone map is written into ${path.basename(state.capture)}. Read the table above,`,
               '  correct any verdict you disagree with, then:',
               '',
-              '      node dist/cli.js run --resume',
+              // Carries the pass-through flags, because `--photos` is not stored
+              // in the run state and the resume rebuilds from scratch without it.
+              // Printing the bare line meant an operator who copied it — which is
+              // what the line is for — silently built at one photo per listing,
+              // passed validate, and left the site permanently mixed.
+              `      node dist/cli.js run --resume${PASS_THROUGH.length > 0 ? ` ${PASS_THROUGH.join(' ')}` : ''}`,
               '',
             ].join('\n'),
           )
