@@ -23,6 +23,7 @@ import {
   type Suburbs,
   placesByCanonical,
 } from 'sydney-rental-schema'
+import { assertKnownFlags, numericFlag } from '../lib/args.js'
 import { computeConfigHash } from '../lib/config-hash.js'
 import { buildListingEntry, listingFlags, sortListings } from '../lib/entry.js'
 import { geocodeSuburbs, type Centroid } from '../lib/geocode-places.js'
@@ -85,16 +86,19 @@ import { providerWarnings } from '../lib/warnings.js'
  */
 const DEFAULT_PHOTOS_PER_LISTING = 1
 
+/** Everything `build` reads. Anything else is a typo, and typos here are silent. */
+const BUILD_FLAGS = ['dry-run', 'run-id', 'local-images', 'force', 'photos'] as const
+
 export async function main(argv: string[]): Promise<void> {
   const DRY_RUN = argv.includes('--dry-run')
   const RUN_ID_OVERRIDE = argv.find((arg) => arg.startsWith('--run-id='))?.slice(9)
   const LOCAL_IMAGES = argv.includes('--local-images')
   /** Build a capture whose transit arrive-by is not the one computed here anyway. */
   const FORCE = argv.includes('--force')
-  const PHOTOS_PER_LISTING = Number(
-    argv.find((a) => a.startsWith('--photos='))?.slice(9) ?? DEFAULT_PHOTOS_PER_LISTING,
-  )
+  const PHOTOS_PER_LISTING = numericFlag(argv, 'photos', DEFAULT_PHOTOS_PER_LISTING)
   const CAPTURE_PATH = argv[0]
+
+  assertKnownFlags(argv, BUILD_FLAGS, 'build')
 
   if (!CAPTURE_PATH) {
     fail(

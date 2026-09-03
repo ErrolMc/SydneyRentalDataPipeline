@@ -36,6 +36,7 @@ const ENRICH: Record<string, string> = {
  * the third talks to R2, and none belongs in a runner invoked with no arguments.
  */
 const SUITES: Record<string, string> = {
+  args: "args",
   scoring: "scoring",
   walk: "walkability",
   searches: "searches",

@@ -10,6 +10,7 @@ import {
   SearchesSchema,
   placesByCanonical,
 } from 'sydney-rental-schema'
+import { assertKnownFlags } from '../lib/args.js'
 import { dataPath, readJsonFile } from '../lib/json-io.js'
 import { closeContext } from '../browser.js'
 import type { Listing, SearchResult } from '../types.js'
@@ -54,6 +55,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** This stage's own argv, set by `main`. `arg` is used from a dozen places. */
 let ARGV: string[] = []
+
+/** Everything `capture` reads. `run` forwards its whole flag list here. */
+const CAPTURE_FLAGS = ['out', 'core', 'probe-pages', 'arrive-by', 'only', 'searches'] as const
 
 function arg(name: string): string | undefined {
   const hit = ARGV.find((a) => a.startsWith(`--${name}=`))
@@ -224,6 +228,8 @@ async function fetchLocation(
 
 export async function main(argv: string[]): Promise<void> {
   ARGV = argv
+
+  assertKnownFlags(argv, CAPTURE_FLAGS, 'capture')
 
   const out = arg('out')
   if (!out) {

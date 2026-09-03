@@ -7,6 +7,7 @@ import path from 'node:path'
 import process from 'node:process'
 
 import { IndexSchema, LedgerSchema } from 'sydney-rental-schema'
+import { assertKnownFlags } from '../lib/args.js'
 import { closeContext } from '../browser.js'
 import { dataPath, readJsonFile, PACKAGE_ROOT } from '../lib/json-io.js'
 import { getListing } from '../lib/listing-detail.js'
@@ -214,7 +215,24 @@ function transitReady(): string | null {
     : `transit router is "${router || 'unset'}", not tfnsw — only TfNSW answers in legs`
 }
 
+/**
+ * Everything `run` reads, plus everything it forwards.
+ *
+ * The capture stage gets `argv.filter((a) => a.startsWith('--'))` — the whole
+ * flag list, unfiltered — so rejecting a name this stage does not itself read
+ * would reject the arguments it exists to pass on.
+ */
+const RUN_FLAGS = [
+  // run's own
+  'dry-run', 'resume', 'search', 'skip-absence', 'no-enrich', 'check-remote',
+  'run-id', 'capture', 'photos', 'local-images', 'force',
+  // forwarded to capture
+  'out', 'core', 'probe-pages', 'arrive-by', 'only', 'searches',
+] as const
+
 export async function main(argv: string[]): Promise<void> {
+  assertKnownFlags(argv, RUN_FLAGS, 'run')
+
   const DRY_RUN = argv.includes('--dry-run')
   const RESUME = argv.includes('--resume')
   const SEARCH = argv.includes('--search')
