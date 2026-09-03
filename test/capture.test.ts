@@ -7,6 +7,7 @@ import '../src/env.js'
 import { TravelSchema } from 'sydney-rental-schema'
 
 import type { MislabelledWalk } from '../src/distance.js'
+import { blankAddressListings } from '../src/lib/rea.js'
 import { normaliseMislabelled } from '../src/lib/search-listings.js'
 import type { Listing } from '../src/types.js'
 
@@ -108,6 +109,55 @@ test('capture', async (t) => {
   normaliseMislabelled([twice])
   normaliseMislabelled([twice])
   check('running it twice is the same as running it once', TravelSchema.safeParse(twice.travel).success)
+
+  // ── listings REA returned with no address ────────────────────────────────────
+  //
+  // These are dropped at build with `no address` and never scored — seven in run
+  // 2026-09-03a, nineteen in 2026-09-03b. `capture` now resolves them from their
+  // detail pages, and this is the part that decides which, and how many fetches
+  // that costs. Grouping matters as much as selecting: the same listing comes
+  // back from every overlapping suburb, and each one must be one page fetch.
+  const row = (id: string, address: string): Listing =>
+    ({ id, address, price: '$700 per week' }) as Listing
+
+  const groups = [
+    {
+      results: [
+        row('1', ''),
+        row('2', '10 Kent Street, Sydney'),
+        row('1', ''),
+        row('3', '   '),
+      ],
+    },
+    { results: [row('1', ''), row('4', '5 Bridge Street, Sydney')] },
+  ]
+  const blanks = blankAddressListings(groups)
+
+  check('only the address-less listings are selected', [...blanks.keys()].sort().join(',') === '1,3')
+  check('whitespace counts as no address', blanks.has('3'))
+  check(
+    'every row of one listing is grouped, so it costs one fetch',
+    blanks.get('1')?.length === 3,
+    String(blanks.get('1')?.length),
+  )
+  check('a listing with an address is never selected', !blanks.has('2') && !blanks.has('4'))
+
+  // Patching the returned rows must reach the capture, since they are the very
+  // objects about to be serialised.
+  for (const occurrence of blanks.get('1') ?? []) occurrence.address = '1 Recovered Way, Sydney'
+  check(
+    'the selected rows are the capture\'s own objects',
+    groups[0].results[0].address === '1 Recovered Way, Sydney' &&
+      groups[1].results[0].address === '1 Recovered Way, Sydney',
+  )
+
+  check('a group with no results array is skipped, not thrown on', (() => {
+    try {
+      return blankAddressListings([{}, { results: null }, undefined]).size === 0
+    } catch {
+      return false
+    }
+  })())
 
   for (const [label, fn] of recorded) await t.test(label, fn)
 })

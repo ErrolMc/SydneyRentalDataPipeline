@@ -11,6 +11,8 @@ import {
   placesByCanonical,
 } from 'sydney-rental-schema'
 import { assertKnownFlags, CAPTURE_FLAGS } from '../lib/args.js'
+import { getListing } from '../lib/listing-detail.js'
+import { blankAddressListings } from '../lib/rea.js'
 import { dataPath, readJsonFile } from '../lib/json-io.js'
 import { closeContext } from '../browser.js'
 import type { Listing, SearchResult } from '../types.js'
@@ -55,6 +57,56 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** This stage's own argv, set by `main`. `arg` is used from a dozen places. */
 let ARGV: string[] = []
+
+/**
+ * Listings REA returned with no address, recovered from their own detail page.
+ *
+ * A search result carries no coordinates at all, and for some listings REA
+ * withholds the street as well — `address` comes back as the empty string with
+ * only the suburb and postcode beside it. `reaToRawListing` drops exactly those
+ * at build with `no address`, so they are never scored: seven of run
+ * 2026-09-03a's nineteen unique listings, and nineteen of 2026-09-03b's 344.
+ *
+ * The detail page has what the search result lacks. `coords()` reads the
+ * building's own position from `address.display.geocode`, so one page fetch
+ * recovers both the address *and* a building-precision coordinate — better than
+ * the street-level geocode the address string would have produced anyway.
+ *
+ * It costs a real page fetch each, so the count is announced before it is spent.
+ * A failure leaves the listing exactly as it was: recovery is a bonus, and an
+ * unrecovered listing is dropped at build precisely as it is today, so this can
+ * never make a capture worse than not trying.
+ */
+async function recoverMissingAddresses(groups: readonly unknown[]): Promise<void> {
+  const occurrences = blankAddressListings(groups)
+  if (occurrences.size === 0) return
+
+  console.log(
+    `\n  ${occurrences.size} listing(s) came back with no address — ` +
+      'one detail page each to recover it',
+  )
+
+  let recovered = 0
+  for (const [id, rows] of occurrences) {
+    try {
+      const detail = await getListing(rows[0].url ?? id)
+      const address = (detail.address ?? '').trim()
+      if (!address) {
+        console.log(`    ${id}  the detail page has no address either — left as it was`)
+        continue
+      }
+      for (const row of rows) {
+        row.address = address
+        if (detail.coords) row.coords = detail.coords
+      }
+      recovered += 1
+      console.log(`    ${id}  ${address}${detail.coords ? '  · building coords' : ''}`)
+    } catch (error) {
+      console.log(`    ${id}  could not fetch — ${(error as Error).message.slice(0, 90)}`)
+    }
+  }
+  console.log(`  recovered   ${recovered} of ${occurrences.size}`)
+}
 
 function arg(name: string): string | undefined {
   const hit = ARGV.find((a) => a.startsWith(`--${name}=`))
@@ -376,6 +428,10 @@ export async function main(argv: string[]): Promise<void> {
         filtered_by_travel: filtered,
       })
     }
+
+    // Before the browser closes, and before the capture is written for the last
+    // time — the incremental per-location snapshots above still hold the blanks.
+    await recoverMissingAddresses(groups)
   } finally {
     await closeContext()
   }

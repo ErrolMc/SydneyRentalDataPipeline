@@ -7,6 +7,7 @@ import {
   type PropertyType,
   type Travel,
 } from 'sydney-rental-schema'
+import type { Listing } from '../types.js'
 import type { RawListing } from './raw.js'
 import { studioListingSignals } from './studio.js'
 
@@ -351,6 +352,36 @@ export interface MappingProblem {
  * ledger key and the suburb key, and a wrong one corrupts memory that is meant
  * to be append-only.
  */
+/**
+ * The listings in a capture that came back with no address, one entry per id.
+ *
+ * REA withholds the street on some listings, so `address` arrives as the empty
+ * string with only suburb and postcode beside it, and `reaToRawListing` drops
+ * them with `no address` before they are ever scored. `capture` resolves them
+ * from their detail pages; this decides which ones and, crucially, groups every
+ * row of the same listing together — a listing returned from eight overlapping
+ * suburbs is one page fetch, not eight.
+ *
+ * `groups` is the JSON about to be written rather than a domain type, so it is
+ * narrowed here instead of cast.
+ */
+export function blankAddressListings(groups: readonly unknown[]): Map<string, Listing[]> {
+  const occurrences = new Map<string, Listing[]>()
+  for (const group of groups) {
+    // Optional chaining, not a bare cast: this runs at the very end of a
+    // capture, after every page has been paid for, so a malformed group must
+    // not be the thing that throws away the pass.
+    const results = (group as { results?: unknown } | null | undefined)?.results
+    if (!Array.isArray(results)) continue
+    for (const listing of results as Listing[]) {
+      if (!listing?.id) continue
+      if ((listing.address ?? '').trim() !== '') continue
+      occurrences.set(listing.id, [...(occurrences.get(listing.id) ?? []), listing])
+    }
+  }
+  return occurrences
+}
+
 export function reaToRawListing(
   listing: ReaListing,
   problems: MappingProblem[],
