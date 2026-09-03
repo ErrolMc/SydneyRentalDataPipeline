@@ -37,6 +37,7 @@ const ENRICH: Record<string, string> = {
  */
 const SUITES: Record<string, string> = {
   args: "args",
+  reset: "reset",
   scoring: "scoring",
   walk: "walkability",
   searches: "searches",

@@ -21,6 +21,9 @@ import { fail } from './stage-error.js'
 /** Everything `capture` reads. */
 export const CAPTURE_FLAGS = ['out', 'core', 'probe-pages', 'arrive-by', 'only', 'searches'] as const
 
+/** Everything `reset` reads. */
+export const RESET_FLAGS = ['confirm', 'run'] as const
+
 /** Everything `build` reads. */
 export const BUILD_FLAGS = ['dry-run', 'run-id', 'local-images', 'force', 'photos'] as const
 

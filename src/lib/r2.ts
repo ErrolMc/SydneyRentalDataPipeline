@@ -86,6 +86,20 @@ export function objectKeyFor(sitePath: string): string {
   return sitePath.replace(/^\/+/, '')
 }
 
+/**
+ * The listing id an object key belongs to, or null if it is not a listing photo.
+ *
+ * `reset --run` decides what to delete from this, so a wrong answer deletes
+ * someone else's photos. Anchored on the `listings/` segment rather than a
+ * prefix match, because keys are stored without a leading slash
+ * (`objectKeyFor`) while the paths a run records carry one, and both spellings
+ * have to resolve to the same listing.
+ */
+export function listingIdFromKey(key: string): string | null {
+  const match = /(?:^|\/)listings\/([^/]+)\/[^/]+$/.exec(key)
+  return match ? match[1] : null
+}
+
 /** Upload one object. Throws on failure — a photo that did not upload must not be recorded. */
 export async function putObject(
   config: R2Config,

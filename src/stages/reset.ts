@@ -3,18 +3,31 @@ import '../env.js'
 
 import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 import process from 'node:process'
 
+import { assertKnownFlags, RESET_FLAGS } from '../lib/args.js'
 import { readCacheFile } from '../lib/cache-file.js'
-import { dataPath, isoNow, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
+import { dataPath, isoNow, readJsonFile, writeJsonFile, PUBLIC_DIR } from '../lib/json-io.js'
 import { fail } from '../lib/stage-error.js'
-import { deleteObject, listObjects, r2ConfigFromEnv } from '../lib/r2.js'
+import { IndexSchema, LedgerSchema } from 'sydney-rental-schema'
+import { deleteObject, listObjects, listingIdFromKey, r2ConfigFromEnv } from '../lib/r2.js'
 
 /**
  * Throw away every run and every photo, and start over.
  *
- *   npm run reset:data              # dry run — says what it would destroy
- *   npm run reset:data -- --confirm # actually does it
+ *   npm run reset:data                        # dry run — says what it would destroy
+ *   npm run reset:data -- --confirm           # actually does it
+ *   npm run reset:data -- --run=<id>[,<id>]   # remove only those runs
+ *
+ * `--run` exists because the unscoped form is all or nothing, which is right for
+ * a shape change and far too much for "undo that run". Scoping has to be *by
+ * run* rather than by kind: `--r2-only` or `--local-only` would produce exactly
+ * the half-reset the last paragraph here warns about. Scoped, a photo is deleted
+ * only when **no remaining run references its listing**, and the ledger's record
+ * of those photos is cleared with them, so disk, bucket and ledger still agree.
+ * Cumulative knowledge — the ledger entries themselves, suburbs, the route cache
+ * — is kept, because it is still true.
  *
  * This exists because during development the *shape* of a run changes, and at
  * some point replaying a capture stops being enough — the ledger, the photos and
@@ -44,6 +57,155 @@ import { deleteObject, listObjects, r2ConfigFromEnv } from '../lib/r2.js'
  */
 
 
+/**
+ * Remove named runs, and only what nothing else still needs.
+ *
+ * The unscoped reset can be brutal because it is meant to be. This one has to
+ * leave the machine consistent, which means the hard part is not deleting the
+ * run — it is deciding which photos may go with it. A listing appears in every
+ * run that found it, so its photos may only be deleted when **no remaining run
+ * references it**. Delete more than that and the surviving run renders paths
+ * that resolve to nothing, which is the exact failure the unscoped path avoids
+ * by clearing everything at once.
+ *
+ * The ledger's `images` record for those listings is cleared alongside, because
+ * the image pipeline decides what to download by what the ledger and mirror say
+ * is already there. Leave it, and the next run skips downloading photos that no
+ * longer exist anywhere.
+ *
+ * Ledger entries, suburb profiles and the route cache are all kept: they are
+ * things learned, not things this run owns, and they remain true.
+ */
+async function resetRuns(ids: string[], confirm: boolean): Promise<void> {
+  console.log(`\nReset ${ids.join(', ')}${confirm ? '' : '  (dry run — nothing will be destroyed)'}`)
+
+  let present: string[] = []
+  try {
+    present = (await readdir(dataPath('runs'), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    fail('there are no runs to remove — data/runs/ does not exist')
+  }
+
+  const unknown = ids.filter((id) => !present.includes(id))
+  if (unknown.length > 0) {
+    fail(
+      `no such run(s): ${unknown.join(', ')}\n` +
+        `  runs present: ${present.join(', ') || '(none)'}`,
+    )
+  }
+
+  const remaining = present.filter((id) => !ids.includes(id))
+
+  // Which listings survive. Read from the runs themselves rather than the
+  // index, because the index records counts and the question here is identity.
+  const keptListings = new Set<string>()
+  for (const id of remaining) {
+    const run = await readJsonFile(dataPath('runs', id, 'run.json'), z.object({
+      listings: z.array(z.object({ id: z.string() })).default([]),
+    }).passthrough())
+    for (const listing of run.listings) keptListings.add(listing.id)
+  }
+
+  const doomedListings = new Set<string>()
+  for (const id of ids) {
+    const run = await readJsonFile(dataPath('runs', id, 'run.json'), z.object({
+      listings: z.array(z.object({ id: z.string() })).default([]),
+    }).passthrough())
+    for (const listing of run.listings) {
+      if (!keptListings.has(listing.id)) doomedListings.add(listing.id)
+    }
+  }
+
+  const { config: r2 } = r2ConfigFromEnv()
+  if (!r2) fail('R2 is not configured — cannot tell what would be deleted from the bucket.')
+
+  const allKeys = await listObjects(r2)
+  const doomedKeys = allKeys.filter((key) => {
+    const listingId = listingIdFromKey(key)
+    return listingId !== null && doomedListings.has(listingId)
+  })
+
+  console.log(`  runs        removing ${ids.length}, keeping ${remaining.length}` +
+    `${remaining.length ? `: ${remaining.join(', ')}` : ''}`)
+  console.log(`  listings    ${doomedListings.size} referenced by no remaining run`)
+  console.log(`  R2          ${doomedKeys.length} object(s) of ${allKeys.length} would go`)
+  console.log(`  kept        ledger entries, suburbs.json and the route cache — still true`)
+
+  if (!confirm) {
+    console.log('\n  Nothing was destroyed. Re-run with --confirm to go ahead.\n')
+    return
+  }
+
+  if (doomedKeys.length > 0) {
+    console.log(`\n  deleting ${doomedKeys.length} object(s) from R2…`)
+    let failed = 0
+    for (const key of doomedKeys) {
+      try {
+        await deleteObject(r2, key)
+      } catch (error) {
+        failed += 1
+        if (failed <= 5) console.log(`    ⚠ ${key}: ${(error as Error).message}`)
+      }
+    }
+    if (failed > 0) {
+      fail('some objects could not be deleted — re-run to retry before touching the local side')
+    }
+    console.log(`  deleted     ${doomedKeys.length} object(s)`)
+  }
+
+  for (const listingId of doomedListings) {
+    await rm(path.join(PUBLIC_DIR, 'images', 'listings', listingId), {
+      recursive: true,
+      force: true,
+    })
+  }
+  console.log(`  removed     ${doomedListings.size} listing folder(s) from the mirror`)
+
+  for (const id of ids) {
+    await rm(dataPath('runs', id), { recursive: true, force: true })
+  }
+  console.log(`  removed     ${ids.map((id) => `data/runs/${id}/`).join(', ')}`)
+
+  // The ledger keeps the listing but must stop claiming photos that are gone.
+  const ledger = await readJsonFile(dataPath('knowledge', 'listings.json'), LedgerSchema)
+  let cleared = 0
+  for (const listingId of doomedListings) {
+    const entry = ledger.listings[listingId]
+    if (!entry) continue
+    entry.images = { source_urls: [], files: [], count: 0 }
+    cleared += 1
+  }
+  if (cleared > 0) {
+    await writeJsonFile(dataPath('knowledge', 'listings.json'), {
+      ...ledger,
+      updated_at: isoNow(),
+    })
+    console.log(`  cleared     the photo record on ${cleared} ledger entr(y/ies)`)
+  }
+
+  // `IndexSchema` requires a non-empty `runs` and a `current_run` naming one, so
+  // there is no valid empty index — absence is how "no runs yet" is spelled.
+  if (remaining.length === 0) {
+    await rm(dataPath('index.json'), { force: true })
+    console.log('  removed     data/index.json (no runs left)')
+  } else {
+    const index = await readJsonFile(dataPath('index.json'), IndexSchema)
+    const runs = index.runs.filter((run) => !ids.includes(run.id))
+    await writeJsonFile(dataPath('index.json'), {
+      ...index,
+      // Newest last, so the last survivor is the natural current run when the
+      // one being removed was it.
+      current_run: ids.includes(index.current_run) ? runs[runs.length - 1].id : index.current_run,
+      runs,
+    })
+    console.log(`  rewrote     data/index.json — current_run is ${runs[runs.length - 1].id}`)
+  }
+
+  console.log('\n  Done. Next: npm run validate:data.\n')
+}
+
 async function dirSize(dir: string): Promise<{ files: number; bytes: number }> {
   let files = 0
   let bytes = 0
@@ -70,7 +232,17 @@ async function dirSize(dir: string): Promise<{ files: number; bytes: number }> {
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
 export async function main(argv: string[]): Promise<void> {
+  assertKnownFlags(argv, RESET_FLAGS, 'reset')
   const CONFIRM = argv.includes('--confirm')
+  const SCOPED = (argv.find((a) => a.startsWith('--run='))?.slice(6) ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+
+  if (SCOPED.length > 0) {
+    await resetRuns(SCOPED, CONFIRM)
+    return
+  }
 
   console.log(`\nReset${CONFIRM ? '' : '  (dry run — nothing will be destroyed)'}`)
 
