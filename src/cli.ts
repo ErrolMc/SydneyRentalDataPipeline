@@ -123,6 +123,16 @@ async function runSuites(names: string[]): Promise<void> {
   const { spawnSync } = await import("node:child_process");
 
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  // Names are keys of SUITES. Checked rather than assumed, because the failure
+  // is otherwise indistinguishable from an unbuilt tree: `SUITES[unknown]` is
+  // undefined, which builds "undefined.test.js", which is reliably missing.
+  const unknown = names.filter((name) => SUITES[name] == null);
+  if (unknown.length > 0) {
+    throw new StageError(
+      `unknown suite(s): ${unknown.join(", ")} — expected ${Object.keys(SUITES).join(", ")}`,
+    );
+  }
+
   const files = names.map((name) => join(root, "dist-test", "test", `${SUITES[name]}.test.js`));
 
   const missing = files.filter((file) => !existsSync(file));
@@ -134,9 +144,23 @@ async function runSuites(names: string[]): Promise<void> {
   if (result.status !== 0) throw new StageError("", true);
 }
 
-function pick(table: Record<string, string>, key: string | undefined, what: string): string {
-  if (key && table[key]) return table[key];
+/**
+ * The validated *key*, for a caller that resolves the table itself.
+ *
+ * `runSuites` re-reads `SUITES` to build a filename, so handing it a value made
+ * `check walk` look up `SUITES["walkability"]`, find nothing, and report the
+ * suites as unbuilt — a message about the build for what is really a name.
+ * `walk -> walkability` is the only entry whose key and value differ, which is
+ * why nine of the ten names worked and hid it.
+ */
+function pickKey(table: Record<string, string>, key: string | undefined, what: string): string {
+  if (key && table[key]) return key;
   usage(2, `${what}: expected one of ${Object.keys(table).join(", ")}${key ? `, got "${key}"` : ""}`);
+}
+
+/** The validated value — what `enrich` and `audit` want, being module names. */
+function pick(table: Record<string, string>, key: string | undefined, what: string): string {
+  return table[pickKey(table, key, what)];
 }
 
 const [command, ...rest] = process.argv.slice(2);
@@ -186,7 +210,7 @@ try {
       if (name && CHECK_STAGES[name]) {
         await runStage(CHECK_STAGES[name], rest.slice(1));
       } else if (name) {
-        await runSuites([pick(SUITES, name, "check")]);
+        await runSuites([pickKey(SUITES, name, "check")]);
       } else {
         await runSuites(DEFAULT_CHECKS);
       }
