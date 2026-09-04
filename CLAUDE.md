@@ -4,7 +4,7 @@ The data pipeline behind ../SydneyRealEstateFindings: it reads realestate.com.au
 through a real Chrome (patchright), measures travel, scores, publishes photos
 and writes that repo's `data/`. The MCP server it used to be is one subcommand
 now (`node dist/cli.js mcp`), kept for interactive `search_listings` /
-`get_listing` from Claude Code. README.md has the command table; MIGRATION.md
+`get_listing` from Claude Code. README.md has the command table; docs/MIGRATION.md
 is the record of how the scripts got here and what Phase 2 still owes.
 
 `src/browser.ts` session + Kasada handling · `src/parse.ts` hydration-blob
@@ -18,7 +18,7 @@ function · `src/mcp.ts` the four-tool adapter · `src/cli.ts` the entry point �
 reset, audit, and `run`, which composes them — each a module exporting
 `main(argv)` that `cli.ts` imports compiled. `src/lib/` is their logic
 (scoring, ledger, search planning, walkability, photos/R2). Both were the
-findings repo's `scripts/` until PHASE2.md moved them here, pointed them at the
+findings repo's `scripts/` until docs/PHASE2.md moved them here, pointed them at the
 `sydney-rental-schema` package and gave them entry points. A stage signals
 failure by **throwing** (`src/lib/stage-error.ts`), never by exiting — that is
 what lets `run` compose them and say which one stopped. `test/` is the former

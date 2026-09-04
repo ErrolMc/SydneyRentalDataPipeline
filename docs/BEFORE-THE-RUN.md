@@ -7,7 +7,7 @@ does not replace it. It is the ordered sequence that came out of asking one ques
 *is it wise to do fresh runs for both searches now?* — and answering **not yet**.
 
 Also read the findings repo's `AGENT.md` (the run protocol, and the authority on what to
-commit) and [README.md](README.md) (the commands).
+commit) and [README.md](../README.md) (the commands).
 
 **Arriving on a different machine than the one this was written on? Start at §0.** Its first
 item is the captures: verify both files are on disk and their hashes match **before** doing

@@ -11,7 +11,7 @@ output.
 
 Read alongside: the findings repo's `AGENT.md` (the run protocol — it is the authority on what
 to do and what to commit), [PHASE2-REPORT.md](PHASE2-REPORT.md) (what changed and how it was
-proved), [README.md](README.md) (the commands).
+proved), [README.md](../README.md) (the commands).
 
 ---
 

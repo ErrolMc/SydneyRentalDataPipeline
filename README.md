@@ -26,7 +26,7 @@ The two checkouts must sit side by side. The schema lives with the data it descr
 `sydney-rental-schema` package inside the findings repo, and this one depends on it by path
 (`file:../SydneyRealEstateFindings/packages/schema`), so npm links it rather than copying it.
 `FINDINGS_DIR` relocates the data, not the code or the package. The moves are recorded in
-[MIGRATION.md](MIGRATION.md) (Phase 1) and [PHASE2.md](PHASE2.md) (Phase 2).
+[MIGRATION.md](docs/MIGRATION.md) (Phase 1) and [PHASE2.md](docs/PHASE2.md) (Phase 2).
 
 ## Requirements
 
